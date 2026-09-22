@@ -35,6 +35,7 @@ class POModel:
             rows = conn.execute(query).fetchall()
         return [
             {
+                "id": r["PurchaseOrderID"],
                 "po_number": po_number(r["PurchaseOrderID"]),
                 "supplier": r["SupplierName"],
                 "date_ordered": nice_date(r["OrderDate"]),
@@ -43,6 +44,49 @@ class POModel:
             }
             for r in rows
         ]
+
+    def get_po_details(self, po_code):
+        try:
+            po_id = int(po_code.split("-")[-1])
+        except (ValueError, IndexError):
+            return None
+
+        with self.db.get_connection() as conn:
+            order = conn.execute(
+                """SELECT po.PurchaseOrderID, po.OrderDate, po.TotalCost, po.Status,
+                          s.SupplierName
+                   FROM PurchaseOrder po
+                   JOIN Supplier s ON s.SupplierID = po.SupplierID
+                   WHERE po.PurchaseOrderID = ?""",
+                (po_id,),
+            ).fetchone()
+            if not order:
+                return None
+            rows = conn.execute(
+                """SELECT p.ProductName, pod.Quantity, pod.UnitCost
+                   FROM PurchaseOrderDetails pod
+                   JOIN Product p ON p.ProductID = pod.ProductID
+                   WHERE pod.PurchaseOrderID = ?
+                   ORDER BY pod.PODetailsID""",
+                (po_id,),
+            ).fetchall()
+
+        return {
+            "po_number": po_code,
+            "supplier": order["SupplierName"],
+            "order_date": nice_date(order["OrderDate"]),
+            "status": order["Status"],
+            "total_cost": order["TotalCost"] or 0.0,
+            "items": [
+                {
+                    "name": row["ProductName"],
+                    "quantity": row["Quantity"],
+                    "unit_cost": row["UnitCost"],
+                    "line_total": row["Quantity"] * row["UnitCost"],
+                }
+                for row in rows
+            ],
+        }
 
     def _get_or_create_supplier(self, conn, supplier_name):
         row = conn.execute(

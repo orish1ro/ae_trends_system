@@ -5,10 +5,16 @@ class POController:
         self.model = model
         self.view = view
         self.view.submit_po_btn.clicked.connect(self.handle_submit_po)
+        self.view.order_details_requested.connect(self.show_order_details)
 
     def load_po_history(self):
         pos = self.model.get_all_po()
         self.view.display_po_history(pos)
+
+    def show_order_details(self, po_number):
+        details = self.model.get_po_details(po_number)
+        if details:
+            self.view.show_order_details(details)
 
     def handle_submit_po(self):
         supplier = self.view.supplier_combo.currentText()

@@ -1,13 +1,60 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QFrame, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QComboBox)
-from PyQt6.QtCore import Qt
+                             QHeaderView, QComboBox, QDialog)
+from PyQt6.QtCore import Qt, QTimer, QPoint, QModelIndex
+from PyQt6.QtCore import pyqtSignal
 from datetime import datetime
 
 RESET = "background: transparent; border: none;"
 PLAIN_LABEL_STYLE = f"font-size: 12px; color: #777777; {RESET}"
 TABLE_HEAD_STYLE = f"font-size: 11px; color: #8A8074; font-weight: 600; letter-spacing: 0.03em; {RESET}"
 FIELD_STYLE = "padding: 9px 10px; font-size: 13px; border: 1px solid #D6CEBC; border-radius: 6px; background: white;"
+
+
+class SupplierComboBox(QComboBox):
+    def showPopup(self):
+        popup_view = self.view()
+        popup_view.setMinimumWidth(self.width())
+        popup_view.setMaximumHeight(170)
+        popup_view.setFrameShape(QFrame.Shape.NoFrame)
+        popup_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        popup_view.setStyleSheet("""
+            QListView {
+                background: white;
+                border: none;
+                outline: none;
+                padding: 3px;
+            }
+            QListView::item {
+                color: #2A2421;
+                background: white;
+                border: none;
+                outline: none;
+                padding: 5px 8px;
+                min-height: 28px;
+            }
+            QListView::item:hover {
+                background: #F5E8C4;
+            }
+            QListView::item:selected {
+                color: #8B6820;
+                background: #FFF2C8;
+                border: none;
+                outline: none;
+            }
+        """)
+        super().showPopup()
+        popup_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        popup_view.clearSelection()
+        popup_view.setCurrentIndex(QModelIndex())
+        QTimer.singleShot(0, self._move_popup_below)
+
+    def _move_popup_below(self):
+        popup = self.view().window()
+        popup.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        popup.show()
+        popup.move(self.mapToGlobal(QPoint(0, self.height())))
 
 
 def labeled_field(label_text, widget):
@@ -24,6 +71,8 @@ def labeled_field(label_text, widget):
 
 
 class PurchaseOrdersView(QWidget):
+    order_details_requested = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.setStyleSheet("background-color: #F7F3EB;")
@@ -60,10 +109,38 @@ class PurchaseOrdersView(QWidget):
         # Row 1: Supplier + Expected Date (plain form fields)
         row1 = QHBoxLayout()
         row1.setSpacing(14)
-        self.supplier_combo = QComboBox()
+        self.supplier_combo = SupplierComboBox()
         self.supplier_combo.addItems(["Select Supplier", "Manila Textile Co.",
                                       "Skincare Lab Ph", "Apparel Prime Inc."])
-        self.supplier_combo.setStyleSheet(FIELD_STYLE)
+        self.supplier_combo.setStyleSheet("""
+            QComboBox {
+                padding: 9px 10px;
+                font-size: 13px;
+                border: 1px solid #D6CEBC;
+                border-radius: 6px;
+                background: white;
+                color: #2A2421;
+            }
+            QComboBox:focus { border: 1px solid #C09E3B; }
+            QComboBox::drop-down { border: none; width: 22px; }
+            QComboBox QAbstractItemView {
+                background: white;
+                color: #2A2421;
+                border: none;
+                outline: none;
+                padding: 3px;
+                selection-background-color: #FFF2C8;
+                selection-color: #8B6820;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 28px;
+                padding: 5px 8px;
+                border-radius: 3px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background: #F5E8C4;
+            }
+        """)
         self.date_input = QLineEdit()
         self.date_input.setText(datetime.now().strftime("%b %d, %Y"))
         self.date_input.setStyleSheet(FIELD_STYLE)
@@ -153,10 +230,21 @@ class PurchaseOrdersView(QWidget):
         f_layout.addLayout(bottom_bar)
         layout.addWidget(form_card)
 
-        # ---- PO History: gets all the remaining vertical space ----
+        # ---- PO History card ----
+        history_card = QFrame()
+        history_card.setObjectName("historyCard")
+        history_card.setStyleSheet("""
+            QFrame#historyCard {
+                background: #FFFDFB;
+                border: 1px solid #E1D7C7;
+                border-radius: 9px;
+            }
+        """)
+        history_layout = QVBoxLayout(history_card)
+        history_layout.setContentsMargins(0, 0, 0, 0)
         hist_title = QLabel("Purchase Order History")
-        hist_title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: #2A2421; {RESET}")
-        layout.addWidget(hist_title)
+        hist_title.setStyleSheet(f"font-size: 13px; font-weight: bold; color: #20283A; padding: 12px 14px; {RESET}")
+        history_layout.addWidget(hist_title)
 
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(6)
@@ -164,28 +252,31 @@ class PurchaseOrdersView(QWidget):
             ["PO#", "SUPPLIER", "DATE ORDERED", "TOTAL COST", "STATUS", "ACTION"])
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.history_table.verticalHeader().setVisible(False)
-        self.history_table.verticalHeader().setDefaultSectionSize(36)
+        self.history_table.verticalHeader().setDefaultSectionSize(40)
+        self.history_table.setShowGrid(True)
+        self.history_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.history_table.setStyleSheet("""
             QTableWidget {
-                background: white;
-                border-radius: 8px;
-                border: 1px solid #E5E0D5;
-                gridline-color: #F0EAE1;
-            }
-            QHeaderView::section {
-                background: #FBF7EF;
-                color: #8A8074;
-                font-weight: 600;
-                font-size: 11px;
+                background: #FFFDFB;
                 border: none;
-                border-bottom: 1px solid #E5E0D5;
-                padding: 8px;
+                gridline-color: #E8DFD0;
+                color: #20283A;
+                outline: none;
+            }
+            QTableWidget::item { padding: 7px 10px; border: none; }
+            QHeaderView::section {
+                background: #F8F2E8;
+                color: #7C8798;
+                font-weight: bold;
+                font-size: 10px;
+                border: none;
+                border-bottom: 1px solid #E1D7C7;
+                padding: 7px 10px;
             }
         """)
-        # Stretch factor of 1 means this table absorbs all the extra
-        # vertical space freed up by shrinking the form card above.
-        layout.addWidget(self.history_table, 1)
+        history_layout.addWidget(self.history_table)
+        layout.addWidget(history_card, 1)
 
         self.item_qty.textChanged.connect(self._update_subtotal_preview)
         self.item_cost.textChanged.connect(self._update_subtotal_preview)
@@ -213,12 +304,168 @@ class PurchaseOrdersView(QWidget):
             self.history_table.setItem(row, 1, QTableWidgetItem(po['supplier']))
             self.history_table.setItem(row, 2, QTableWidgetItem(po['date_ordered']))
             self.history_table.setItem(row, 3, QTableWidgetItem(f"\u20b1{po['total_cost']:,.2f}"))
-            self.history_table.setItem(row, 4, QTableWidgetItem(po['status']))
+
+            for column in range(4):
+                self.history_table.item(row, column).setTextAlignment(
+                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter
+                )
+            self.history_table.item(row, 3).setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter
+            )
+
+            status_badge = QLabel(po['status'])
+            status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            status_badge.setFixedHeight(22)
+            if po['status'] == "Pending":
+                status_badge.setStyleSheet(
+                    "color: #B45309; background: #FFF9E8; border: 1px solid #C97816; "
+                    "border-radius: 5px; padding: 0 7px; font-size: 10px;"
+                )
+            else:
+                status_badge.setStyleSheet(
+                    "color: #118443; background: #F2FFF6; border: 1px solid #22A05A; "
+                    "border-radius: 5px; padding: 0 7px; font-size: 10px;"
+                )
+            self.history_table.setCellWidget(row, 4, status_badge)
 
             details_btn = QPushButton("Order Details")
             details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             details_btn.setStyleSheet(
                 "background: #C09E3B; color: white; font-weight: bold; "
-                "padding: 4px 10px; border-radius: 4px; border: none; font-size: 11px;"
+                "padding: 5px 10px; border-radius: 4px; border: none; font-size: 10px;"
+            )
+            details_btn.clicked.connect(
+                lambda checked, po_number=po['po_number']:
+                self.order_details_requested.emit(po_number)
             )
             self.history_table.setCellWidget(row, 5, details_btn)
+
+    def show_order_details(self, details):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Purchase Order Details")
+        dialog.setMinimumSize(760, 500)
+        dialog.setStyleSheet("background: #F7F3EB; color: #20283A;")
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        title = QLabel("Purchase Order Details")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #20283A;")
+        subtitle = QLabel(f"Latest purchase order from {details['supplier'].upper()}.")
+        subtitle.setStyleSheet("font-size: 11px; color: #667085;")
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background: #FFFDFB;
+                border: 1px solid #E1D7C7;
+                border-radius: 9px;
+            }
+            QLabel { border: none; background: transparent; }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(10)
+
+        order_header = QHBoxLayout()
+        order_title = QLabel(f"{details['po_number']} - {details['supplier'].upper()}")
+        order_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #20283A;")
+        order_header.addWidget(order_title)
+        order_header.addStretch()
+        order_status = QLabel(details['status'])
+        order_status.setStyleSheet(
+            "color: #B45309; background: #FFF9E8; border: 1px solid #C97816; "
+            "border-radius: 5px; padding: 3px 9px; font-size: 10px;"
+        )
+        order_header.addWidget(order_status)
+        card_layout.addLayout(order_header)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setStyleSheet("background: #E8DFD0; max-height: 1px; border: none;")
+        card_layout.addWidget(divider)
+
+        summary_title = QLabel("Order Summary")
+        summary_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #20283A;")
+        card_layout.addWidget(summary_title)
+
+        summary_row = QHBoxLayout()
+        for label_text, value_text in (
+            ("PO ID", details['po_number']),
+            ("SUPPLIER", details['supplier']),
+            ("ORDER DATE", details['order_date']),
+            ("STATUS", details['status']),
+            ("TOTAL COST", f"\u20b1{details['total_cost']:,.2f}"),
+        ):
+            summary_box = QFrame()
+            summary_box.setStyleSheet(
+                "background: #FBF4E8; border: none; border-radius: 6px;"
+            )
+            summary_layout = QVBoxLayout(summary_box)
+            summary_layout.setContentsMargins(9, 7, 9, 7)
+            label = QLabel(label_text)
+            label.setStyleSheet("font-size: 8px; color: #7C8798;")
+            value = QLabel(value_text)
+            value.setStyleSheet("font-size: 11px; font-weight: bold; color: #20283A;")
+            summary_layout.addWidget(label)
+            summary_layout.addWidget(value)
+            summary_row.addWidget(summary_box)
+        card_layout.addLayout(summary_row)
+
+        items_table = QTableWidget()
+        items_table.setColumnCount(4)
+        items_table.setHorizontalHeaderLabels(["ITEM", "QTY", "UNIT COST", "LINE TOTAL"])
+        items_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        items_table.verticalHeader().setVisible(False)
+        items_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        items_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        items_table.setStyleSheet("""
+            QTableWidget { background: #FFFDFB; border: none; gridline-color: #E8DFD0; }
+            QTableWidget::item { padding: 7px 9px; border: none; color: #20283A; }
+            QHeaderView::section {
+                background: #F8F2E8; color: #7C8798; border: none;
+                border-bottom: 1px solid #E1D7C7; padding: 7px 9px;
+                font-size: 9px; font-weight: bold;
+            }
+        """)
+        items_table.setRowCount(len(details['items']))
+        for row, item in enumerate(details['items']):
+            values = [
+                item['name'], str(item['quantity']),
+                f"\u20b1{item['unit_cost']:,.2f}",
+                f"\u20b1{item['line_total']:,.2f}",
+            ]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | (
+                    Qt.AlignmentFlag.AlignRight if column in (1, 2, 3)
+                    else Qt.AlignmentFlag.AlignLeft
+                ))
+                items_table.setItem(row, column, cell)
+        card_layout.addWidget(items_table)
+
+        total_row = QHBoxLayout()
+        total_row.addStretch()
+        total_box = QFrame()
+        total_box.setStyleSheet("background: #FBF4E8; border: 1px solid #E1D7C7; border-radius: 6px;")
+        total_layout = QVBoxLayout(total_box)
+        total_layout.setContentsMargins(12, 8, 12, 8)
+        total_label = QLabel(f"Total                         \u20b1{details['total_cost']:,.2f}")
+        total_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #20283A;")
+        total_layout.addWidget(total_label)
+        total_row.addWidget(total_box)
+        card_layout.addLayout(total_row)
+
+        layout.addWidget(card)
+        close_btn = QPushButton("Close")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(
+            "background: #C09E3B; color: white; font-weight: bold; "
+            "padding: 9px 22px; border: none; border-radius: 5px;"
+        )
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        dialog.exec()

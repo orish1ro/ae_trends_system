@@ -24,7 +24,8 @@ class TransactionController:
         cust_name = self.record_view.name_input.text().strip()
         cust_phone = self.record_view.phone_input.text().strip()
         address = self.record_view.address_input.text().strip()
-        order_type = "Online" if self.record_view.online_tab.isChecked() else "Walk-in"
+        platform = self.record_view.platform_combo.currentText()
+        order_type = platform
         cart = self.record_view.cart_items
         total = self.record_view.current_total
 

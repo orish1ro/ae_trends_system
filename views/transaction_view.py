@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QFrame, QRadioButton, QScrollArea, QButtonGroup,
-                             QFileDialog)
-from PyQt6.QtCore import pyqtSignal, Qt
+                             QFileDialog, QComboBox)
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QPoint
 
 # Any QLabel/QRadioButton placed inside a card that has its own
 # background/border style will otherwise inherit that same background+
@@ -13,6 +13,22 @@ from PyQt6.QtCore import pyqtSignal, Qt
 RESET = "background: transparent; border: none;"
 CAPTION_STYLE = f"font-size: 12px; font-weight: 600; color: #8A8074; {RESET}"
 CARD_STYLE = "background: white; border-radius: 10px; border: 1px solid #E5E0D5;"
+
+
+class PlatformComboBox(QComboBox):
+    def showPopup(self):
+        popup_view = self.view()
+        popup_view.setMinimumWidth(self.width())
+        popup_view.setMaximumHeight(130)
+        super().showPopup()
+        QTimer.singleShot(0, self._move_popup_below)
+
+    def _move_popup_below(self):
+        popup = self.view().window()
+        popup.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        popup.show()
+        popup.move(self.mapToGlobal(QPoint(0, self.height())))
 
 
 def field_group(label_text, widget):
@@ -98,11 +114,44 @@ class TransactionView(QWidget):
         name_phone_row.addLayout(field_group("Contact Number", self.phone_input), 1)
         cust_layout.addLayout(name_phone_row)
 
+        self.platform_combo = PlatformComboBox()
+        self.platform_combo.addItems(["Walk-in", "Facebook", "TikTok"])
+        self.platform_combo.setFixedHeight(34)
+        self.platform_combo.setStyleSheet("""
+            QComboBox {
+                background: #FFFFFF;
+                color: #2A2421;
+                border: 1px solid #D6CEBC;
+                border-radius: 6px;
+                padding: 7px 10px;
+            }
+            QComboBox:focus { border: 1px solid #C09E3B; }
+            QComboBox::drop-down { border: none; width: 22px; }
+            QComboBox QAbstractItemView {
+                background: #FFFFFF;
+                color: #2A2421;
+                border: none;
+                outline: none;
+                padding: 3px;
+                selection-background-color: #FFF2C8;
+                selection-color: #8B6820;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 26px;
+                padding: 5px 8px;
+            }
+        """)
         self.address_input = QLineEdit()
         self.address_input.setPlaceholderText("Delivery address for online orders...")
         self.address_group = field_group("Delivery Address", self.address_input)
         self._address_group_widgets = [self.address_group.itemAt(i).widget() for i in range(self.address_group.count())]
-        cust_layout.addLayout(self.address_group)
+        self.platform_group = field_group("Platform", self.platform_combo)
+        self._platform_group_widgets = [self.platform_group.itemAt(i).widget() for i in range(self.platform_group.count())]
+        online_details_row = QHBoxLayout()
+        online_details_row.setSpacing(16)
+        online_details_row.addLayout(self.address_group, 1)
+        online_details_row.addLayout(self.platform_group, 1)
+        cust_layout.addLayout(online_details_row)
         self._toggle_delivery_address(False)  # hidden by default - Walk-in is checked first
 
         left_col.addWidget(cust_box)
@@ -326,6 +375,10 @@ class TransactionView(QWidget):
     def _toggle_delivery_address(self, online_checked):
         for w in self._address_group_widgets:
             w.setVisible(online_checked)
+        for w in self._platform_group_widgets:
+            w.setVisible(online_checked)
+        if not online_checked:
+            self.platform_combo.setCurrentIndex(0)
 
     def _set_catalog_filter(self, category):
         for name, button in self.catalog_filter_buttons.items():
@@ -541,5 +594,6 @@ class TransactionView(QWidget):
         self.name_input.clear()
         self.phone_input.clear()
         self.address_input.clear()
+        self.platform_combo.setCurrentIndex(0)
         self.cart_items = []
         self.refresh_cart_ui()

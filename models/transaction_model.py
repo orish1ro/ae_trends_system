@@ -77,16 +77,20 @@ class TransactionModel:
         return cur.lastrowid
 
     def _platform_id_for(self, conn, order_type):
-        if order_type == "Walk-in":
-            row = conn.execute(
-                "SELECT PlatformID FROM Platform WHERE PlatformName = 'Walk-in'"
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT PlatformID FROM Platform WHERE PlatformName != 'Walk-in' "
-                "ORDER BY PlatformID LIMIT 1"
-            ).fetchone()
-        return row["PlatformID"] if row else 1
+        platform_name = {
+            "Facebook": "Facebook Live",
+            "TikTok": "TikTok Live",
+        }.get(order_type, order_type)
+        row = conn.execute(
+            "SELECT PlatformID FROM Platform WHERE PlatformName = ?",
+            (platform_name,),
+        ).fetchone()
+        if row:
+            return row["PlatformID"]
+        cur = conn.execute(
+            "INSERT INTO Platform (PlatformName) VALUES (?)", (platform_name,)
+        )
+        return cur.lastrowid
 
     def create_order(self, customer_name, customer_phone, address, order_type,
                       total, payment_method, cart_items):
