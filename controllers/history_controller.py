@@ -1,0 +1,86 @@
+"""CONTROLLER: Transaction History."""
+from views.transaction_history_view import OrderDetailDialog, PurchaseDetailDialog
+
+
+class HistoryController:
+    def __init__(self, model, view):
+        self.model = model
+        self.view = view
+        
+        self.view.populate_filter_options(self.model.get_filter_options())
+
+        self.view.filters_changed.connect(self.load)
+        self.view.view_requested.connect(self.open_detail)
+        self.view.page_changed.connect(self.change_page)
+
+        self.current_rows = []
+        self.current_tab = "All Transactions"
+        self.current_page = 1
+        
+        self.load()
+
+    def load(self):
+        self.current_page = 1
+        tab = self.view.get_active_tab()
+        f = self.view.get_filters()
+
+        orders = self.model.get_customer_orders(
+            search=f["search"], date_from=f["date_from"], date_to=f["date_to"],
+            status=f["status"], platform=f["platform"],
+            payment_method=f["payment_method"], staff=f["staff"])
+        purchases = self.model.get_inventory_purchases(
+            search=f["search"], date_from=f["date_from"], date_to=f["date_to"],
+            status=f["status"], staff=f["staff"])
+
+        if tab == "Customer Orders":
+            rows = orders
+        elif tab == "Inventory Purchases":
+            rows = purchases
+        else:
+            rows = sorted(orders + purchases, key=lambda r: r["id"], reverse=True)
+
+        self.current_rows = rows
+        self.current_tab = tab
+
+        start = (self.current_page - 1) * self.view.page_size
+        end = start + self.view.page_size
+        self.view.display_transactions(rows[start:end], tab)
+        self.view.set_pagination(len(rows), self.current_page)
+        self.view.update_summary(self.model.get_summary(f["date_from"], f["date_to"]))
+
+    def change_page(self, direction):
+        if not self.current_rows:
+            return
+
+        total_pages = max(
+            1,
+            (len(self.current_rows) + self.view.page_size - 1) // self.view.page_size
+        )
+        new_page = self.current_page + int(direction)
+        if new_page < 1 or new_page > total_pages:
+            return
+
+        self.current_page = new_page
+        start = (self.current_page - 1) * self.view.page_size
+        end = start + self.view.page_size
+        self.view.display_transactions(
+            self.current_rows[start:end],
+            self.current_tab
+        )
+        self.view.set_pagination(len(self.current_rows), self.current_page)
+
+    def open_detail(self, kind, row_id):
+        if kind == "order":
+            detail = self.model.get_order_detail(row_id)
+            if detail:
+                # Pass self.process_refund as the callback for the button
+                OrderDetailDialog(self.view, detail, on_refund=self.process_refund).exec()
+        else:
+            detail = self.model.get_purchase_detail(row_id)
+            if detail:
+                PurchaseDetailDialog(self.view, detail).exec()
+                
+    def process_refund(self, order_id):
+        """Triggers the refund in the DB and refreshes the table."""
+        if self.model.process_refund(order_id):
+            self.load()

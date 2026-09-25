@@ -8,11 +8,16 @@ from PyQt6.QtGui import QPixmap
 from views.styled_dropdown import StyledComboBox
 
 class InventoryController:
-    def __init__(self, model, view):
+    def __init__(self, model, view, on_data_changed=None):
         self.model = model
         self.view = view
+
+        self.on_data_changed = on_data_changed  # call after any write, so Dashboard/Reports/other
+                                                 # pages that also depend on Product data stay in sync
+
         self.is_edit_modal_open = False
         self.selected_product = None
+
         
         self.view.search_input.textChanged.connect(self.load_products)
         self.view.category_filter.currentTextChanged.connect(self.load_products)
@@ -26,6 +31,15 @@ class InventoryController:
         status = self.view.status_filter.currentText()
         products = self.model.get_all_products(search, category, status)
         self.view.display_products(products)
+
+    def _notify_change(self):
+        """Called after a write. Uses the app-wide refresh if one was
+        provided (so Dashboard/Reports update too); otherwise just
+        refreshes this page's own table."""
+        if self.on_data_changed:
+            self.on_data_changed()
+        else:
+            self.load_products()
 
     def open_add_product_dialog(self):
         self._open_product_dialog()
@@ -107,7 +121,7 @@ class InventoryController:
                 else:
                     self.model.add_product(name, cat, price, stock, reorder, exp, image_path=image_value)
                 dialog.accept()
-                self.load_products()
+                self._notify_change()
             except ValueError as e:
                 QMessageBox.warning(dialog, "Input Error", f"Please enter valid product values. {e}")
             except Exception as error:

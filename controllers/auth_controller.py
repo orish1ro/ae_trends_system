@@ -2,10 +2,12 @@ from models.user_model import UserModel
 from models.inventory_model import InventoryModel
 from models.transaction_model import TransactionModel
 from models.po_model import POModel
+from models.history_model import HistoryModel
 from controllers.inventory_controller import InventoryController
 from controllers.transaction_controller import TransactionController
 from controllers.report_controller import ReportController
 from controllers.po_controller import POController
+from controllers.history_controller import HistoryController
 from PyQt6.QtWidgets import QMessageBox
 
 class AuthController:
@@ -68,8 +70,12 @@ class AuthController:
         po_model = POModel(self.db, staff_id)
 
         self.inv_ctrl = InventoryController(inv_model, self.main_window.inventory_view)
-        self.txn_ctrl = TransactionController(txn_model, inv_model, self.main_window.record_tx_view, self.main_window.order_status_view)
-        self.po_ctrl = POController(po_model, self.main_window.purchase_orders_view)
+        self.hist_ctrl = HistoryController(HistoryModel(self.db), self.main_window.transaction_history_view)
+        self.txn_ctrl = TransactionController(
+            txn_model, inv_model, self.main_window.record_tx_view,
+            self.main_window.order_status_view, on_order_saved=self.hist_ctrl.load)
+        self.po_ctrl = POController(
+            po_model, self.main_window.purchase_orders_view, on_po_saved=self.hist_ctrl.load)
         self.rep_ctrl = ReportController(self.db, self.main_window.reports_view, self.main_window.dashboard_view)
         self.main_window.dashboard_view.date_range_changed.connect(self.rep_ctrl.load_dashboard_range)
 
@@ -77,7 +83,12 @@ class AuthController:
         self.txn_ctrl.load_catalog()
         self.txn_ctrl.load_orders()
         self.po_ctrl.load_po_history()
+
+        self.rep_ctrl.load_reports()
+        self.hist_ctrl.load()
+
         self.rep_ctrl.load_dashboard_range("Today")
+
 
     def handle_logout(self):
         self.main_window.hide()

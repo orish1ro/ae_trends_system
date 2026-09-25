@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import QMessageBox
 
 class POController:
-    def __init__(self, model, view):
+    def __init__(self, model, view, on_po_saved=None):
         self.model = model
         self.view = view
+        self.on_po_saved = on_po_saved
         self.view.submit_po_btn.clicked.connect(self.handle_submit_po)
         self.view.order_details_requested.connect(self.show_order_details)
 
@@ -36,3 +37,5 @@ class POController:
                                        item_name, item_qty, item_cost)
         QMessageBox.information(self.view, "Success", f"Purchase Order {po_code} submitted!")
         self.load_po_history()
+        if self.on_po_saved:
+            self.on_po_saved()
