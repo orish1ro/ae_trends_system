@@ -53,9 +53,9 @@ CREATE TABLE IF NOT EXISTS Product (
     Category       TEXT,
     Price          REAL NOT NULL CHECK (Price >= 0),
     StockQuantity  INTEGER NOT NULL DEFAULT 0 CHECK (StockQuantity >= 0),
-    DateAdded      TEXT NOT NULL DEFAULT (datetime('now')),
+    DateAdded      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     ExpirationDate TEXT,
-    LastEditedAt   TEXT NOT NULL DEFAULT (datetime('now')),
+    LastEditedAt   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (SupplierID) REFERENCES Supplier(SupplierID),
     FOREIGN KEY (StaffID)    REFERENCES Staff(StaffID)
 );
@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS Orders (
     CustomerID       INTEGER NOT NULL,
     StaffID          INTEGER NOT NULL,
     PlatformID       INTEGER NOT NULL,
-    OrderDate        TEXT NOT NULL DEFAULT (datetime('now')),
+    OrderDate        TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     TotalAmount      REAL NOT NULL DEFAULT 0 CHECK (TotalAmount >= 0),
     OrderStatus      TEXT NOT NULL DEFAULT 'Pending'
                      CHECK (OrderStatus IN ('Pending','Paid','Prepared','Shipped','Completed','Refunded')),
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS Payment (
     OrderID         INTEGER NOT NULL UNIQUE,
     PaymentMethod   TEXT CHECK (PaymentMethod IN ('Cash','GCash','Online Banking')),
     AmountPaid      REAL NOT NULL DEFAULT 0 CHECK (AmountPaid >= 0),
-    PaymentDate     TEXT DEFAULT (datetime('now')),
+    PaymentDate     TEXT DEFAULT (datetime('now','localtime')),
     PaymentStatus   TEXT NOT NULL DEFAULT 'Unpaid'
                     CHECK (PaymentStatus IN ('Unpaid','Paid','Refunded')),
     ReferenceNumber TEXT,
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS PurchaseOrder (
     PurchaseOrderID      INTEGER PRIMARY KEY AUTOINCREMENT,
     StaffID              INTEGER NOT NULL,
     SupplierID           INTEGER NOT NULL,
-    OrderDate            TEXT NOT NULL DEFAULT (datetime('now')),
+    OrderDate            TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     ExpectedDeliveryDate TEXT,
     Status               TEXT NOT NULL DEFAULT 'Pending'
                          CHECK (Status IN ('Pending','Received','Cancelled')),

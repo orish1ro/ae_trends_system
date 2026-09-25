@@ -1,7 +1,4 @@
-"""MODEL: reads/writes PurchaseOrder and PurchaseOrderDetails.
-
-The Purchase Orders screen currently takes one quick item line (name, qty,
-unit cost) per PO, so each PO here gets exactly one PurchaseOrderDetails row."""
+"""MODEL: reads/writes PurchaseOrder and PurchaseOrderDetails."""
 from datetime import datetime
 
 
@@ -114,7 +111,8 @@ class POModel:
         return cur.lastrowid
 
     def create_po(self, supplier, date_expected, total_cost,
-                  item_name=None, item_qty=0, item_cost=0.0):
+                  item_name=None, item_qty=0, item_cost=0.0, items_list=None):
+        """Creates a PO and inserts multiple items if items_list is provided."""
         with self.db.get_connection() as conn:
             supplier_id = self._get_or_create_supplier(conn, supplier)
             cur = conn.execute(
@@ -125,13 +123,55 @@ class POModel:
             )
             po_id = cur.lastrowid
 
+            # Combine single item (from old controller) and new multiple items list
+            to_insert = items_list or []
             if item_name and item_qty > 0:
-                product_id = self._get_or_create_product(conn, item_name, item_cost)
-                conn.execute(
-                    """INSERT INTO PurchaseOrderDetails (PurchaseOrderID, ProductID,
-                                                          Quantity, UnitCost)
-                       VALUES (?, ?, ?, ?)""",
-                    (po_id, product_id, item_qty, item_cost),
-                )
+                to_insert.append({
+                    'product': item_name,
+                    'quantity': item_qty,
+                    'unit_cost': item_cost
+                })
+
+            for item in to_insert:
+                p_name = item.get('product')
+                p_qty = item.get('quantity', 0)
+                p_cost = item.get('unit_cost', 0.0)
+                
+                if p_name and p_qty > 0:
+                    product_id = self._get_or_create_product(conn, p_name, p_cost)
+                    conn.execute(
+                        """INSERT INTO PurchaseOrderDetails (PurchaseOrderID, ProductID,
+                                                              Quantity, UnitCost)
+                           VALUES (?, ?, ?, ?)""",
+                        (po_id, product_id, p_qty, p_cost),
+                    )
             conn.commit()
             return po_number(po_id)
+
+    def mark_po_received(self, po_code):
+        """Updates PO to Received AND automatically adds the items to your inventory stock."""
+        try:
+            po_id = int(po_code.split("-")[-1])
+        except (ValueError, IndexError):
+            return
+
+        with self.db.get_connection() as conn:
+            # 1. Update the status
+            conn.execute(
+                "UPDATE PurchaseOrder SET Status = 'Received' WHERE PurchaseOrderID = ?",
+                (po_id,)
+            )
+            
+            # 2. Fetch the items inside this order
+            items = conn.execute(
+                "SELECT ProductID, Quantity FROM PurchaseOrderDetails WHERE PurchaseOrderID = ?",
+                (po_id,)
+            ).fetchall()
+            
+            # 3. Auto-restock your inventory table
+            for item in items:
+                conn.execute(
+                    "UPDATE Product SET StockQuantity = StockQuantity + ? WHERE ProductID = ?",
+                    (item["Quantity"], item["ProductID"])
+                )
+            conn.commit()

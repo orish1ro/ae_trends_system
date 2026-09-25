@@ -461,9 +461,13 @@ class TransactionHistoryView(QWidget):
         self.table.clear()
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
+        # 1. Make all columns stretch to fill the empty space
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+# 2. Keep ONLY the last column (View button) fixed so it doesn't get cut off
         self.table.horizontalHeader().setSectionResizeMode(
-            len(headers) - 1, QHeaderView.ResizeMode.ResizeToContents)
+        len(headers) - 1, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(len(headers) - 1, 80)
 
     def _make_view_button(self, kind, row_id):
         btn = QPushButton("View")
@@ -512,7 +516,7 @@ class TransactionHistoryView(QWidget):
     def display_transactions(self, rows, tab):
         self.table.setRowCount(len(rows))
         self.empty_label.setVisible(len(rows) == 0)
-        self.table.setVisible(len(rows) > 0)
+        self.table.setVisible(True)
 
         for row_idx, r in enumerate(rows):
             if tab == "Customer Orders":

@@ -42,11 +42,12 @@ class TransactionModel:
         # Filters OUT 'Completed', 'Cancelled', and 'Refunded' to keep the queue clean
         query = """
             SELECT o.OrderID, o.OrderDate, o.TotalAmount, o.OrderStatus,
-                   c.FullName AS CustomerName, pl.PlatformName,
+                   c.FullName AS CustomerName, pl.PlatformName, pm.PaymentMethod,
                    GROUP_CONCAT(pr.ProductName || ' (x' || od.Quantity || ')', ', ') AS ItemsBought
             FROM Orders o
             JOIN Customer c ON c.CustomerID = o.CustomerID
             JOIN Platform pl ON pl.PlatformID = o.PlatformID
+            LEFT JOIN Payment pm ON pm.OrderID = o.OrderID
             LEFT JOIN OrderDetails od ON o.OrderID = od.OrderID
             LEFT JOIN Product pr ON od.ProductID = pr.ProductID
             WHERE o.OrderStatus NOT IN ('Completed', 'Cancelled', 'Refunded')
@@ -75,6 +76,7 @@ class TransactionModel:
                 "order_date": nice_date(r["OrderDate"]),
                 "total_amount": r["TotalAmount"],
                 "status": r["OrderStatus"],
+                "payment_method": r["PaymentMethod"] if "PaymentMethod" in r.keys() else None,
             }
             for r in rows
         ]
@@ -131,12 +133,22 @@ class TransactionModel:
             platform_id = self._platform_id_for(conn, order_type)
             initial_status = "Completed" if order_type == "Walk-in" else "Pending"
 
+            # Store OrderDate using LOCAL time explicitly. Relying on SQLite's
+            # column default (datetime('now')) is wrong here -- that function
+            # returns UTC time, while the dashboard's date filters (and the
+            # rest of the app) work in local time. Left as the default, any
+            # sale recorded between local midnight and ~8AM (UTC+8) gets
+            # stamped with the *previous* UTC day, so it silently drops out
+            # of "Today" on the Sales Performance chart even though the
+            # Today's Sales KPI (which also compares against UTC "now")
+            # still counts it. Passing local time here keeps both consistent.
+            order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cur = conn.execute(
                 """INSERT INTO Orders (CustomerID, StaffID, PlatformID, TotalAmount,
-                                       OrderStatus, DeliveryAddress)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                       OrderStatus, DeliveryAddress, OrderDate)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (customer_id, self.staff_id, platform_id, total, initial_status,
-                 address or None),
+                 address or None, order_date),
             )
             order_id = cur.lastrowid
 
