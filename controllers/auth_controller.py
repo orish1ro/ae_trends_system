@@ -71,12 +71,13 @@ class AuthController:
         self.txn_ctrl = TransactionController(txn_model, inv_model, self.main_window.record_tx_view, self.main_window.order_status_view)
         self.po_ctrl = POController(po_model, self.main_window.purchase_orders_view)
         self.rep_ctrl = ReportController(self.db, self.main_window.reports_view, self.main_window.dashboard_view)
+        self.main_window.dashboard_view.date_range_changed.connect(self.rep_ctrl.load_dashboard_range)
 
         self.inv_ctrl.load_products()
         self.txn_ctrl.load_catalog()
         self.txn_ctrl.load_orders()
         self.po_ctrl.load_po_history()
-        self.rep_ctrl.load_reports()
+        self.rep_ctrl.load_dashboard_range("Today")
 
     def handle_logout(self):
         self.main_window.hide()

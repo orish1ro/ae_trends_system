@@ -1,7 +1,11 @@
+import base64
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QFrame, QRadioButton, QScrollArea, QButtonGroup,
-                             QFileDialog, QComboBox)
-from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QPoint
+                             QFileDialog, QDialog, QMessageBox)
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
+from views.styled_dropdown import StyledComboBox
 
 # Any QLabel/QRadioButton placed inside a card that has its own
 # background/border style will otherwise inherit that same background+
@@ -13,22 +17,90 @@ from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QPoint
 RESET = "background: transparent; border: none;"
 CAPTION_STYLE = f"font-size: 12px; font-weight: 600; color: #8A8074; {RESET}"
 CARD_STYLE = "background: white; border-radius: 10px; border: 1px solid #E5E0D5;"
+FIELD_STYLE = "padding: 8px 10px; font-size: 12px; border: 1px solid #D6CEBC; border-radius: 6px; background: #FFFDFB; color: #2A2421;"
 
 
-class PlatformComboBox(QComboBox):
-    def showPopup(self):
-        popup_view = self.view()
-        popup_view.setMinimumWidth(self.width())
-        popup_view.setMaximumHeight(130)
-        super().showPopup()
-        QTimer.singleShot(0, self._move_popup_below)
+PlatformComboBox = StyledComboBox
 
-    def _move_popup_below(self):
-        popup = self.view().window()
-        popup.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        popup.show()
-        popup.move(self.mapToGlobal(QPoint(0, self.height())))
+
+class CatalogRow(QFrame):
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class QuantitySelector(QFrame):
+    """Compact, theme-styled quantity control shared by catalog rows."""
+
+    value_changed = pyqtSignal(int)
+
+    def __init__(self, value=0, maximum=999, parent=None):
+        super().__init__(parent)
+        self.maximum = maximum
+        self.setFixedSize(86, 28)
+        self.setObjectName("quantitySelector")
+        self.setStyleSheet("""
+            QFrame#quantitySelector {
+                background: #FFFDF8;
+                border: 1px solid #D6CEBC;
+                border-radius: 7px;
+            }
+            QFrame#quantitySelector QPushButton {
+                background: transparent;
+                color: #6D6257;
+                border: none;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 0;
+            }
+            QFrame#quantitySelector QPushButton:hover { background: #F3E7D3; color: #6D5A27; }
+            QFrame#quantitySelector QPushButton:pressed { background: #EADCB9; }
+            QFrame#quantitySelector QLineEdit {
+                background: transparent;
+                color: #2A2421;
+                border: none;
+                padding: 0;
+                font-size: 12px;
+                selection-background-color: #FFF2C8;
+            }
+        """)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(2, 1, 2, 1)
+        layout.setSpacing(0)
+        self.minus_button = QPushButton("-")
+        self.plus_button = QPushButton("+")
+        self.value_input = QLineEdit()
+        self.minus_button.setFixedSize(24, 24)
+        self.plus_button.setFixedSize(24, 24)
+        self.value_input.setFixedSize(32, 24)
+        self.value_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.value_input.setText(str(value))
+        self.value_input.editingFinished.connect(self._commit_input)
+        self.minus_button.clicked.connect(lambda: self.set_value(self.value - 1))
+        self.plus_button.clicked.connect(lambda: self.set_value(self.value + 1))
+        layout.addWidget(self.minus_button)
+        layout.addWidget(self.value_input)
+        layout.addWidget(self.plus_button)
+
+    @property
+    def value(self):
+        try:
+            return int(self.value_input.text())
+        except ValueError:
+            return 0
+
+    def _commit_input(self):
+        self.set_value(self.value)
+
+    def set_value(self, value):
+        value = max(0, min(self.maximum, int(value)))
+        self.value_input.setText(str(value))
+        self.minus_button.setEnabled(value > 0)
+        self.plus_button.setEnabled(value < self.maximum)
+        self.value_changed.emit(value)
 
 
 def field_group(label_text, widget):
@@ -47,8 +119,18 @@ class TransactionView(QWidget):
     def __init__(self):
         super().__init__()
         self.setStyleSheet("background-color: #F7F3EB;")
-        self.cart_items = []
+        self.walk_in_cart = []
+        self.online_cart = []
+        self._mode_forms = {
+            "walkin": self._empty_form_state(),
+            "online": self._empty_form_state(),
+        }
+        self._catalog_products = []
+        self._filtered_catalog_products = []
+        self._catalog_page = 1
+        self._catalog_page_size = 5
         self.current_total = 0.0
+        self._active_transaction_mode = "walkin"
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(30, 25, 30, 25)
@@ -85,7 +167,7 @@ class TransactionView(QWidget):
         tab_grp = QButtonGroup(self)
         tab_grp.addButton(self.walkin_tab)
         tab_grp.addButton(self.online_tab)
-        self.online_tab.toggled.connect(self._toggle_delivery_address)
+        self.online_tab.toggled.connect(self._handle_transaction_mode_change)
         tab_layout.addWidget(self.walkin_tab)
         tab_layout.addWidget(self.online_tab)
         tab_layout.addStretch()
@@ -115,35 +197,12 @@ class TransactionView(QWidget):
         cust_layout.addLayout(name_phone_row)
 
         self.platform_combo = PlatformComboBox()
-        self.platform_combo.addItems(["Walk-in", "Facebook", "TikTok"])
-        self.platform_combo.setFixedHeight(34)
-        self.platform_combo.setStyleSheet("""
-            QComboBox {
-                background: #FFFFFF;
-                color: #2A2421;
-                border: 1px solid #D6CEBC;
-                border-radius: 6px;
-                padding: 7px 10px;
-            }
-            QComboBox:focus { border: 1px solid #C09E3B; }
-            QComboBox::drop-down { border: none; width: 22px; }
-            QComboBox QAbstractItemView {
-                background: #FFFFFF;
-                color: #2A2421;
-                border: none;
-                outline: none;
-                padding: 3px;
-                selection-background-color: #FFF2C8;
-                selection-color: #8B6820;
-            }
-            QComboBox QAbstractItemView::item {
-                min-height: 26px;
-                padding: 5px 8px;
-            }
-        """)
+        self.platform_combo.addItems(["Shopee", "TikTok Shop", "Lazada", "FB/IG", "Direct"])
         self.address_input = QLineEdit()
         self.address_input.setPlaceholderText("Delivery address for online orders...")
         self.address_group = field_group("Delivery Address", self.address_input)
+        self.name_label = name_phone_row.itemAt(0).layout().itemAt(0).widget()
+        self.phone_label = name_phone_row.itemAt(1).layout().itemAt(0).widget()
         self._address_group_widgets = [self.address_group.itemAt(i).widget() for i in range(self.address_group.count())]
         self.platform_group = field_group("Platform", self.platform_combo)
         self._platform_group_widgets = [self.platform_group.itemAt(i).widget() for i in range(self.platform_group.count())]
@@ -153,6 +212,12 @@ class TransactionView(QWidget):
         online_details_row.addLayout(self.platform_group, 1)
         cust_layout.addLayout(online_details_row)
         self._toggle_delivery_address(False)  # hidden by default - Walk-in is checked first
+
+        self.form_error = QLabel()
+        self.form_error.setWordWrap(True)
+        self.form_error.setVisible(False)
+        self.form_error.setStyleSheet("color: #A33F35; background: #FBE8E2; border: 1px solid #E9B8AE; border-radius: 5px; padding: 7px 9px; font-size: 11px;")
+        cust_layout.addWidget(self.form_error)
 
         left_col.addWidget(cust_box)
 
@@ -164,6 +229,11 @@ class TransactionView(QWidget):
         self.catalog_count.setStyleSheet(f"font-size: 11px; color: #8A8074; {RESET}")
         catalog_toolbar.addWidget(cat_title)
         catalog_toolbar.addStretch()
+        self.refresh_catalog_btn = QPushButton("Refresh")
+        self.refresh_catalog_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.refresh_catalog_btn.setFixedHeight(28)
+        self.refresh_catalog_btn.setStyleSheet("QPushButton { background: #F6EEDC; color: #6D5A27; border: 1px solid #D6CEBC; border-radius: 5px; padding: 4px 10px; font-size: 11px; } QPushButton:hover { background: #EADCB9; }")
+        catalog_toolbar.addWidget(self.refresh_catalog_btn)
         catalog_toolbar.addWidget(self.catalog_count)
         left_col.addLayout(catalog_toolbar)
 
@@ -199,7 +269,8 @@ class TransactionView(QWidget):
         self.search_input.setStyleSheet(
             "padding: 7px 10px; border: 1px solid #E5DCCA; border-radius: 5px; background: #FFFDFB;"
         )
-        self.search_input.textChanged.connect(self._apply_catalog_filters)
+        self.search_input.textChanged.connect(lambda text: self._apply_catalog_filters(reset_page=True))
+        QTimer.singleShot(0, self.search_input.setFocus)
         catalog_filter_row.addWidget(self.search_input, stretch=1)
         left_col.addLayout(catalog_filter_row)
 
@@ -220,6 +291,25 @@ class TransactionView(QWidget):
         self.catalog_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.catalog_scroll.setWidget(self.catalog_container)
         catalog_card_layout.addWidget(self.catalog_scroll)
+
+        pagination = QHBoxLayout()
+        pagination.setContentsMargins(8, 6, 8, 2)
+        self.previous_page_btn = QPushButton("Previous")
+        self.next_page_btn = QPushButton("Next")
+        self.catalog_page_label = QLabel("Page 1 of 1")
+        self.catalog_page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.catalog_page_label.setStyleSheet(f"font-size: 11px; color: #7C8798; {RESET}")
+        for button in (self.previous_page_btn, self.next_page_btn):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setStyleSheet("QPushButton { background: #FFFDF8; color: #6D6257; border: 1px solid #E5DCCA; border-radius: 5px; padding: 5px 10px; } QPushButton:hover:enabled { background: #F3E7D3; } QPushButton:disabled { color: #B8AEA2; background: #F6F1E8; }")
+        self.previous_page_btn.clicked.connect(lambda: self._change_catalog_page(-1))
+        self.next_page_btn.clicked.connect(lambda: self._change_catalog_page(1))
+        pagination.addWidget(self.previous_page_btn)
+        pagination.addStretch()
+        pagination.addWidget(self.catalog_page_label)
+        pagination.addStretch()
+        pagination.addWidget(self.next_page_btn)
+        catalog_card_layout.addLayout(pagination)
         left_col.addWidget(catalog_card, stretch=1)
 
         main_layout.addLayout(left_col, 60)
@@ -307,21 +397,46 @@ class TransactionView(QWidget):
         right_layout.addWidget(self.pay_gcash)
         right_layout.addWidget(self.pay_bank)
 
-        receipt_title = QLabel("Upload Receipt Image")
-        receipt_title.setStyleSheet(f"font-size: 12px; font-weight: 600; color: #20283A; margin-top: 6px; {RESET}")
-        right_layout.addWidget(receipt_title)
+        self.payment_details = QFrame()
+        self.payment_details.setStyleSheet(f"background: #FBF7EF; border: 1px solid #E8DFD0; border-radius: 7px; {RESET}")
+        payment_layout = QVBoxLayout(self.payment_details)
+        payment_layout.setContentsMargins(10, 8, 10, 8)
+        payment_layout.setSpacing(5)
+        self.payment_label = QLabel()
+        self.payment_label.setStyleSheet(f"font-size: 11px; font-weight: 600; color: #6F6255; {RESET}")
+        payment_layout.addWidget(self.payment_label)
+        self.amount_paid_input = QLineEdit()
+        self.amount_paid_input.setPlaceholderText("0.00")
+        self.amount_paid_input.setStyleSheet(FIELD_STYLE)
+        self.amount_paid_input.textChanged.connect(self._update_change)
+        self.change_label = QLabel("Change: ₱0.00")
+        self.change_label.setStyleSheet(f"font-size: 12px; font-weight: bold; color: #6D9F71; {RESET}")
+        self.reference_input = QLineEdit()
+        self.reference_input.setPlaceholderText("Enter reference number")
+        self.reference_input.setStyleSheet(FIELD_STYLE)
+        payment_layout.addWidget(self.amount_paid_input)
+        payment_layout.addWidget(self.change_label)
+        payment_layout.addWidget(self.reference_input)
+        right_layout.addWidget(self.payment_details)
+        self.pay_cash.toggled.connect(self._update_payment_fields)
+        self.pay_gcash.toggled.connect(self._update_payment_fields)
+        self.pay_bank.toggled.connect(self._update_payment_fields)
 
-        receipt_box = QFrame()
-        receipt_box.setObjectName("receiptBox")
-        receipt_box.setMinimumHeight(62)
-        receipt_box.setStyleSheet("""
+        self.receipt_title = QLabel("Upload Receipt Image")
+        self.receipt_title.setStyleSheet(f"font-size: 12px; font-weight: 600; color: #20283A; margin-top: 6px; {RESET}")
+        right_layout.addWidget(self.receipt_title)
+
+        self.receipt_box = QFrame()
+        self.receipt_box.setObjectName("receiptBox")
+        self.receipt_box.setMinimumHeight(62)
+        self.receipt_box.setStyleSheet("""
             QFrame#receiptBox {
                 background: #FFF8DD;
                 border: 1px dashed #D5AA27;
                 border-radius: 7px;
             }
         """)
-        receipt_layout = QHBoxLayout(receipt_box)
+        receipt_layout = QHBoxLayout(self.receipt_box)
         receipt_layout.setContentsMargins(12, 8, 8, 8)
         receipt_layout.setSpacing(8)
         self.receipt_status = QLabel("No receipt uploaded")
@@ -341,7 +456,8 @@ class TransactionView(QWidget):
         upload_btn.clicked.connect(self._choose_receipt)
         receipt_layout.addWidget(self.receipt_status, stretch=1)
         receipt_layout.addWidget(upload_btn)
-        right_layout.addWidget(receipt_box)
+        right_layout.addWidget(self.receipt_box)
+        self._update_payment_fields()
 
         self.confirm_btn = QPushButton("Confirm Transaction")
         self.confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -372,38 +488,203 @@ class TransactionView(QWidget):
         if file_path:
             self.receipt_status.setText(file_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1])
 
+    def _update_payment_fields(self):
+        is_cash = self.pay_cash.isChecked()
+        is_walkin = self.walkin_tab.isChecked()
+        show_reference = not is_cash and not is_walkin
+        self.payment_label.setText("Amount Paid" if is_cash else "Reference Number")
+        self.amount_paid_input.setVisible(is_cash)
+        self.change_label.setVisible(is_cash)
+        self.reference_input.setVisible(show_reference)
+        self.payment_label.setVisible(is_cash or show_reference)
+        self.payment_details.setVisible(is_cash or show_reference)
+        self.receipt_title.setVisible(is_walkin or not is_cash)
+        self.receipt_box.setVisible(is_walkin or not is_cash)
+        self._update_change()
+
+    def _update_change(self):
+        if not self.pay_cash.isChecked():
+            return
+        try:
+            amount_paid = float(self.amount_paid_input.text() or 0)
+        except ValueError:
+            amount_paid = 0
+        change = max(0, amount_paid - self.current_total)
+        self.change_label.setText(f"Change: ₱{change:,.2f}")
+
+    def get_payment_details(self):
+        if self.pay_cash.isChecked():
+            try:
+                amount_paid = float(self.amount_paid_input.text() or 0)
+            except ValueError:
+                amount_paid = 0
+            return {
+                "method": "Cash",
+                "amount_paid": amount_paid,
+                "reference_number": "",
+                "receipt_image": "",
+            }
+        return {
+            "method": self.get_selected_payment(),
+            "amount_paid": self.current_total,
+            "reference_number": self.reference_input.text().strip(),
+            "receipt_image": self.receipt_status.text() if self.receipt_status.text() != "No receipt uploaded" else "",
+        }
+
     def _toggle_delivery_address(self, online_checked):
+        self.name_label.setText("Customer Name" if online_checked else "Customer Name (Optional)")
+        self.phone_label.setText("Contact Number" if online_checked else "Contact Number (Optional)")
         for w in self._address_group_widgets:
             w.setVisible(online_checked)
         for w in self._platform_group_widgets:
             w.setVisible(online_checked)
         if not online_checked:
             self.platform_combo.setCurrentIndex(0)
+        if hasattr(self, "payment_details"):
+            self._update_payment_fields()
+
+    @staticmethod
+    def _empty_form_state():
+        return {
+            "name": "",
+            "phone": "",
+            "address": "",
+            "platform_index": 0,
+            "payment": "GCash",
+            "amount_paid": "",
+            "reference": "",
+            "receipt": "No receipt uploaded",
+        }
+
+    @property
+    def cart_items(self):
+        return self.walk_in_cart if self._active_transaction_mode == "walkin" else self.online_cart
+
+    @cart_items.setter
+    def cart_items(self, items):
+        if self._active_transaction_mode == "walkin":
+            self.walk_in_cart = items
+        else:
+            self.online_cart = items
+
+    def _save_mode_form_state(self):
+        self._mode_forms[self._active_transaction_mode] = {
+            "name": self.name_input.text(),
+            "phone": self.phone_input.text(),
+            "address": self.address_input.text(),
+            "platform_index": self.platform_combo.currentIndex(),
+            "payment": self.get_selected_payment(),
+            "amount_paid": self.amount_paid_input.text(),
+            "reference": self.reference_input.text(),
+            "receipt": self.receipt_status.text(),
+        }
+
+    def _load_mode_form_state(self):
+        state = self._mode_forms[self._active_transaction_mode]
+        self.name_input.setText(state["name"])
+        self.phone_input.setText(state["phone"])
+        self.address_input.setText(state["address"])
+        self.platform_combo.setCurrentIndex(state["platform_index"])
+        payment_buttons = {
+            "Cash": self.pay_cash,
+            "GCash": self.pay_gcash,
+            "Online Banking": self.pay_bank,
+        }
+        payment_buttons.get(state["payment"], self.pay_gcash).setChecked(True)
+        self.amount_paid_input.setText(state["amount_paid"])
+        self.reference_input.setText(state["reference"])
+        self.receipt_status.setText(state["receipt"])
+
+    def _handle_transaction_mode_change(self, online_checked):
+        next_mode = "online" if online_checked else "walkin"
+        if next_mode != self._active_transaction_mode:
+            self._save_mode_form_state()
+            self._active_transaction_mode = next_mode
+            self._load_mode_form_state()
+        self._toggle_delivery_address(online_checked)
+        self.refresh_cart_ui()
+        self._apply_catalog_filters()
+
+    def _reset_active_mode_state(self):
+        self.cart_items = []
+        self.name_input.clear()
+        self.phone_input.clear()
+        self.address_input.clear()
+        self.platform_combo.setCurrentIndex(0)
+        self.pay_gcash.setChecked(True)
+        self.amount_paid_input.clear()
+        self.reference_input.clear()
+        self.receipt_status.setText("No receipt uploaded")
+        self.form_error.clear()
+        self.form_error.setVisible(False)
+        self.refresh_cart_ui()
+        self._apply_catalog_filters()
 
     def _set_catalog_filter(self, category):
         for name, button in self.catalog_filter_buttons.items():
             button.setChecked(name == category)
-        self._apply_catalog_filters()
+        self._apply_catalog_filters(reset_page=True)
 
-    def _apply_catalog_filters(self):
+    def _apply_catalog_filters(self, reset_page=False):
+        if reset_page:
+            self._catalog_page = 1
         category = next(
             (name for name, button in self.catalog_filter_buttons.items() if button.isChecked()),
             "All",
         )
         query = self.search_input.text().strip().lower()
-        filtered = [
+        self._filtered_catalog_products = [
             product for product in self._catalog_products
             if (category == "All" or category.lower() in product['category'].lower())
             and (not query or query in product['name'].lower() or query in str(product['id']))
         ]
-        self._render_catalog(filtered)
+        self._render_catalog()
 
     def populate_catalog(self, products):
         self._catalog_products = products
         self.catalog_count.setText(f"{len(products)} products")
+        self._catalog_page = 1
         self._apply_catalog_filters()
 
-    def _render_catalog(self, products):
+    def _change_catalog_page(self, direction):
+        page_count = max(1, (len(self._filtered_catalog_products) + self._catalog_page_size - 1) // self._catalog_page_size)
+        self._catalog_page = max(1, min(page_count, self._catalog_page + direction))
+        self._render_catalog()
+
+    def _product_thumbnail(self, product, size=38):
+        thumbnail = QLabel()
+        thumbnail.setFixedSize(size, size)
+        thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_path = product.get("image_path", "")
+        pixmap = QPixmap()
+        if image_path.startswith("data:image/"):
+            try:
+                pixmap.loadFromData(base64.b64decode(image_path.split(",", 1)[1]))
+            except (ValueError, IndexError):
+                pixmap = QPixmap()
+        elif image_path:
+            pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor("#F3E7D3"))
+            painter = QPainter(pixmap)
+            painter.setPen(QColor("#8B6820"))
+            painter.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+            initials = "".join(part[0] for part in product["name"].split()[:2]).upper()
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, initials)
+            painter.end()
+        thumbnail.setPixmap(pixmap.scaled(size - 2, size - 2, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        thumbnail.setStyleSheet("background: #F3E7D3; border: 1px solid #E5DCCA; border-radius: 5px;")
+        return thumbnail
+
+    def _render_catalog(self):
+        page_count = max(1, (len(self._filtered_catalog_products) + self._catalog_page_size - 1) // self._catalog_page_size)
+        self._catalog_page = min(self._catalog_page, page_count)
+        start = (self._catalog_page - 1) * self._catalog_page_size
+        products = self._filtered_catalog_products[start:start + self._catalog_page_size]
+        self.catalog_page_label.setText(f"Page {self._catalog_page} of {page_count}")
+        self.previous_page_btn.setEnabled(self._catalog_page > 1)
+        self.next_page_btn.setEnabled(self._catalog_page < page_count)
         while self.catalog_layout.count():
             item = self.catalog_layout.takeAt(0)
             if item.widget():
@@ -420,7 +701,7 @@ class TransactionView(QWidget):
             if text == "PRODUCT":
                 header_layout.addWidget(label, stretch=1)
             elif text == "QUANTITY":
-                label.setFixedWidth(62)
+                label.setFixedWidth(86)
                 header_layout.addWidget(label)
             else:
                 label.setFixedWidth(70 if text != "ACTION" else 58)
@@ -428,7 +709,7 @@ class TransactionView(QWidget):
         self.catalog_layout.addWidget(headers)
 
         for i, prod in enumerate(products):
-            row = QFrame()
+            row = CatalogRow()
             row.setObjectName("catalogRow")
             row.setFixedHeight(58)
             row.setStyleSheet(f"""
@@ -441,6 +722,7 @@ class TransactionView(QWidget):
             r_layout = QHBoxLayout(row)
             r_layout.setContentsMargins(14, 6, 14, 6)
 
+            r_layout.addWidget(self._product_thumbnail(prod))
             info = QLabel(f"<b>{prod['name']}</b><br><span style='color:#8A8074;'>{prod['category']}</span>")
             info.setStyleSheet(RESET)
 
@@ -452,38 +734,13 @@ class TransactionView(QWidget):
             stock.setFixedWidth(70)
             stock.setStyleSheet(f"color: {'#C94C4C' if prod['stock_qty'] <= 10 else '#766B60'}; {RESET}")
 
-            quantity_box = QFrame()
-            quantity_box.setFixedWidth(62)
-            quantity_box.setStyleSheet("background: transparent; border: none;")
-            quantity_layout = QHBoxLayout(quantity_box)
-            quantity_layout.setContentsMargins(0, 0, 0, 0)
-            quantity_layout.setSpacing(0)
-
-            minus_btn = QPushButton("-")
-            minus_btn.setFixedSize(20, 24)
-            minus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            minus_btn.setStyleSheet("""
-                QPushButton { background: #FFFDF8; color: #756B60; border: 1px solid #E5DCCA; border-radius: 4px 0 0 4px; font-weight: bold; }
-                QPushButton:hover { background: #F3E7D3; }
-            """)
-            minus_btn.clicked.connect(lambda checked, product_id=prod['id']: self.remove_from_selected(product_id))
-
-            qty_lbl = QLabel(str(self._cart_quantity(prod['id'])))
-            qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            qty_lbl.setFixedSize(22, 24)
-            qty_lbl.setStyleSheet("background: #FFFDF8; color: #2A2421; border-top: 1px solid #E5DCCA; border-bottom: 1px solid #E5DCCA;")
-
-            plus_btn = QPushButton("+")
-            plus_btn.setFixedSize(20, 24)
-            plus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            plus_btn.setStyleSheet("""
-                QPushButton { background: #FFFDF8; color: #756B60; border: 1px solid #E5DCCA; border-radius: 0 4px 4px 0; font-weight: bold; }
-                QPushButton:hover { background: #F3E7D3; }
-            """)
-            plus_btn.clicked.connect(lambda checked, product=prod: self.item_added_to_cart.emit(product))
-            quantity_layout.addWidget(minus_btn)
-            quantity_layout.addWidget(qty_lbl)
-            quantity_layout.addWidget(plus_btn)
+            quantity_box = QuantitySelector(
+                value=self._cart_quantity(prod['id']),
+                maximum=max(0, prod.get('stock_qty', 0)),
+            )
+            quantity_box.value_changed.connect(
+                lambda value, product_id=prod['id'], product=prod: self._set_catalog_quantity(product_id, value, product)
+            )
 
             add_btn = QPushButton("Add")
             add_btn.setFixedWidth(58)
@@ -492,6 +749,7 @@ class TransactionView(QWidget):
                 "background: #C09E3B; color: white; padding: 6px 8px; border-radius: 4px; border: none;"
             )
             add_btn.clicked.connect(lambda ch, p=prod: self.item_added_to_cart.emit(p))
+            row.clicked.connect(lambda p=prod: self.item_added_to_cart.emit(p))
 
             r_layout.addWidget(info)
             r_layout.addWidget(stock)
@@ -505,9 +763,24 @@ class TransactionView(QWidget):
     def _cart_quantity(self, product_id):
         return next((item['qty'] for item in self.cart_items if item['id'] == product_id), 0)
 
+    def _set_catalog_quantity(self, product_id, quantity, product):
+        current = self._cart_quantity(product_id)
+        if quantity > current:
+            for _ in range(quantity - current):
+                self.add_to_selected(product)
+        elif quantity < current:
+            for _ in range(current - quantity):
+                self.remove_from_selected(product_id)
+
     def add_to_selected(self, product):
+        if product.get("stock_qty", 0) <= 0:
+            self.show_form_error("This product is out of stock.")
+            return
         for item in self.cart_items:
             if item['id'] == product['id']:
+                if item['qty'] >= product.get("stock_qty", 0):
+                    self.show_form_error("Quantity cannot exceed available stock.")
+                    return
                 item['qty'] += 1
                 self.refresh_cart_ui()
                 self._apply_catalog_filters()
@@ -517,6 +790,8 @@ class TransactionView(QWidget):
             'id': product['id'],
             'name': product['name'],
             'price': product['price'],
+            'stock_qty': product.get('stock_qty', 0),
+            'image_path': product.get('image_path', ''),
             'qty': 1
         })
         self.refresh_cart_ui()
@@ -551,30 +826,37 @@ class TransactionView(QWidget):
             self.current_total += line_total
 
             box = QFrame()
-            box.setStyleSheet(f"border-bottom: 1px solid #E8E0D4; {RESET}")
+            box.setStyleSheet("QFrame { background: transparent; border-bottom: 1px solid #E8E0D4; }")
             b_layout = QHBoxLayout(box)
-            b_layout.setContentsMargins(0, 5, 0, 5)
+            b_layout.setContentsMargins(0, 9, 0, 9)
+            b_layout.setSpacing(10)
 
+            b_layout.addWidget(self._product_thumbnail(item, 48))
             name_column = QVBoxLayout()
-            name_column.setSpacing(1)
+            name_column.setSpacing(3)
             name_lbl = QLabel(item['name'])
             name_lbl.setStyleSheet(f"font-size: 12px; color: #20283A; {RESET}")
             price_lbl = QLabel(f"\u20b1{item['price']:,.2f} each")
             price_lbl.setStyleSheet(f"font-size: 10px; color: #7C8798; {RESET}")
             name_column.addWidget(name_lbl)
             name_column.addWidget(price_lbl)
-            qty_lbl = QLabel(f"x{item['qty']}")
-            qty_lbl.setFixedWidth(28)
-            qty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            qty_lbl.setStyleSheet(f"font-weight: bold; color: #C09E3B; {RESET}")
-            total_lbl = QLabel(f"\u20b1{line_total:,.2f}")
-            total_lbl.setFixedWidth(76)
-            total_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            total_lbl.setStyleSheet(f"font-size: 12px; color: #20283A; {RESET}")
+            detail_column = QVBoxLayout()
+            detail_column.setSpacing(3)
+            detail_column.addLayout(name_column)
 
-            b_layout.addLayout(name_column, stretch=1)
-            b_layout.addWidget(qty_lbl)
-            b_layout.addWidget(total_lbl)
+            quantity_label = QLabel(f"x{item['qty']}")
+            quantity_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            quantity_label.setStyleSheet(f"font-size: 11px; font-weight: bold; color: #A9872E; {RESET}")
+            total_label = QLabel(f"\u20b1{line_total:,.2f}")
+            total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            total_label.setStyleSheet(f"font-size: 12px; font-weight: bold; color: #20283A; {RESET}")
+
+            b_layout.addLayout(detail_column, stretch=1)
+            amount_column = QVBoxLayout()
+            amount_column.setSpacing(3)
+            amount_column.addWidget(quantity_label)
+            amount_column.addWidget(total_label)
+            b_layout.addLayout(amount_column)
             self.cart_layout.addWidget(box)
 
         product_count = len(self.cart_items)
@@ -582,6 +864,7 @@ class TransactionView(QWidget):
         self.cart_summary.setText(f"{product_count} products \u2022 {unit_count} units")
         self.cart_count_badge.setText(str(product_count))
         self.total_label.setText(f"\u20b1{self.current_total:,.2f}")
+        self._update_change()
 
     def get_selected_payment(self):
         if self.pay_cash.isChecked():
@@ -590,10 +873,51 @@ class TransactionView(QWidget):
             return "GCash"
         return "Online Banking"
 
+    def show_form_error(self, message):
+        self.form_error.setStyleSheet("color: #A33F35; background: #FBE8E2; border: 1px solid #E9B8AE; border-radius: 5px; padding: 7px 9px; font-size: 11px;")
+        self.form_error.setText(message)
+        self.form_error.setVisible(True)
+
+    def show_form_success(self, message):
+        self.form_error.setStyleSheet("color: #2F7A4A; background: #EAF6ED; border: 1px solid #A9D5B4; border-radius: 5px; padding: 7px 9px; font-size: 11px;")
+        self.form_error.setText(message)
+        self.form_error.setVisible(True)
+
+    def show_transaction_success(self, order_code):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Transaction Complete")
+        dialog.setFixedWidth(390)
+        dialog.setStyleSheet("QDialog { background: #FFFDFB; color: #2A2421; }")
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(10)
+
+        title = QLabel("Transaction saved successfully")
+        title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: #6D9F71; {RESET}")
+        detail = QLabel(f"Order Code: {order_code}\nTotal: ₱{self.current_total:,.2f}")
+        detail.setStyleSheet(f"font-size: 13px; color: #2A2421; {RESET}")
+        layout.addWidget(title)
+        layout.addWidget(detail)
+
+        actions = QHBoxLayout()
+        print_btn = QPushButton("Print Thermal Receipt")
+        print_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        print_btn.setStyleSheet("QPushButton { background: #F6EEDC; color: #6D5A27; border: 1px solid #D6CEBC; border-radius: 6px; padding: 9px 10px; font-weight: bold; } QPushButton:hover { background: #EADCB9; }")
+        new_sale_btn = QPushButton("Start New Sale")
+        new_sale_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        new_sale_btn.setStyleSheet("QPushButton { background: #C09E3B; color: white; border: none; border-radius: 6px; padding: 9px 10px; font-weight: bold; } QPushButton:hover { background: #A9872E; }")
+        print_btn.clicked.connect(lambda: self._print_thermal_receipt(dialog, order_code))
+        new_sale_btn.clicked.connect(dialog.accept)
+        actions.addWidget(print_btn)
+        actions.addWidget(new_sale_btn)
+        layout.addLayout(actions)
+        dialog.exec()
+
+    @staticmethod
+    def _print_thermal_receipt(parent, order_code):
+        QMessageBox.information(parent, "Receipt", f"Thermal receipt prepared for {order_code}.")
+
     def clear_form(self):
-        self.name_input.clear()
-        self.phone_input.clear()
-        self.address_input.clear()
-        self.platform_combo.setCurrentIndex(0)
-        self.cart_items = []
-        self.refresh_cart_ui()
+        self._mode_forms[self._active_transaction_mode] = self._empty_form_state()
+        self._reset_active_mode_state()
+        QTimer.singleShot(0, self.search_input.setFocus)

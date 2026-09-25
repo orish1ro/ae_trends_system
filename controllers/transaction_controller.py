@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QMessageBox
+import re
 
 class TransactionController:
     def __init__(self, txn_model, inv_model, record_view, status_view):
@@ -9,6 +10,7 @@ class TransactionController:
 
         self.record_view.item_added_to_cart.connect(self.handle_add_to_cart)
         self.record_view.confirm_btn.clicked.connect(self.handle_confirm_transaction)
+        self.record_view.refresh_catalog_btn.clicked.connect(self.load_catalog)
         
         self.status_view.filter_changed.connect(self.load_orders)
         self.status_view.search_input.textChanged.connect(self.load_orders)
@@ -18,32 +20,71 @@ class TransactionController:
         self.record_view.populate_catalog(products)
 
     def handle_add_to_cart(self, product):
-        self.record_view.add_to_selected(product)
+        try:
+            self.record_view.add_to_selected(product)
+        except Exception:
+            self.record_view.show_form_error("Unable to add this product. Please try again.")
 
     def handle_confirm_transaction(self):
-        cust_name = self.record_view.name_input.text().strip()
-        cust_phone = self.record_view.phone_input.text().strip()
-        address = self.record_view.address_input.text().strip()
-        platform = self.record_view.platform_combo.currentText()
-        order_type = platform
-        cart = self.record_view.cart_items
-        total = self.record_view.current_total
-
-        if not cust_name:
-            QMessageBox.warning(self.record_view, "Validation Error", "Customer name is required.")
+        if not self.record_view.confirm_btn.isEnabled():
             return
+        self.record_view.confirm_btn.setEnabled(False)
+        self.record_view.confirm_btn.setText("Processing...")
+        try:
+            is_online = self.record_view.online_tab.isChecked()
+            cust_name = self.record_view.name_input.text().strip()
+            cust_phone = self.record_view.phone_input.text().strip()
+            address = self.record_view.address_input.text().strip()
+            platform = self.record_view.platform_combo.currentText()
+            order_type = platform if is_online else "Walk-in"
+            cart = self.record_view.cart_items
+            total = self.record_view.current_total
 
-        if not cart:
-            QMessageBox.warning(self.record_view, "Cart Empty", "Please add at least one product.")
-            return
+            if is_online and not cust_name:
+                self.record_view.show_form_error("Customer name is required for online orders.")
+                return
+            if is_online and not cust_phone:
+                self.record_view.show_form_error("Contact number is required for online orders.")
+                return
+            if is_online and cust_phone and not re.fullmatch(r"\+?\d{10,15}", cust_phone):
+                self.record_view.show_form_error("Invalid contact number format.")
+                return
+            if is_online and not address:
+                self.record_view.show_form_error("Delivery address is required for online orders.")
+                return
+            if is_online and not platform:
+                self.record_view.show_form_error("Please select a selling platform.")
+                return
+            if not cart:
+                self.record_view.show_form_error("Please add at least one product.")
+                return
 
-        payment = self.record_view.get_selected_payment()
-        order_code = self.txn_model.create_order(cust_name, cust_phone, address, order_type, total, payment, cart)
+            payment = self.record_view.get_payment_details()
+            if not payment["method"]:
+                self.record_view.show_form_error("Please select a payment method.")
+                return
+            if payment["method"] == "Cash" and payment["amount_paid"] < total:
+                self.record_view.show_form_error("Amount paid must cover the transaction total.")
+                return
+            if is_online and payment["method"] != "Cash" and not payment["reference_number"]:
+                self.record_view.show_form_error("Reference number is required for electronic payments.")
+                return
 
-        QMessageBox.information(self.record_view, "Success", f"Transaction saved successfully!\nOrder Code: {order_code}")
-        self.record_view.clear_form()
-        self.load_catalog()
-        self.load_orders()
+            order_code = self.txn_model.create_order(
+                cust_name, cust_phone, address, order_type, total, payment["method"], cart,
+                amount_paid=payment["amount_paid"],
+                reference_number=payment["reference_number"],
+                receipt_image=payment["receipt_image"],
+            )
+            self.record_view.show_transaction_success(order_code)
+            self.record_view.clear_form()
+            self.load_catalog()
+            self.load_orders()
+        except Exception:
+            self.record_view.show_form_error("Unable to save transaction. Please check the fields and try again.")
+        finally:
+            self.record_view.confirm_btn.setEnabled(True)
+            self.record_view.confirm_btn.setText("Confirm Transaction")
 
     def load_orders(self):
         current_tab = self.status_view.get_active_tab()

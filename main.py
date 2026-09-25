@@ -52,14 +52,14 @@ def main():
         }
         
         /* Style inputs to match the design */
-        QLineEdit, QComboBox {
+        QLineEdit {
             background-color: #FFFFFF;
             color: #2A2421;
             border: 1px solid #D6CEBC;
             border-radius: 6px;
             padding: 8px;
         }
-        QLineEdit:focus, QComboBox:focus {
+        QLineEdit:focus {
             border: 1px solid #C09E3B;
         }
     """)
