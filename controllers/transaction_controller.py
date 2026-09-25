@@ -1,7 +1,5 @@
 from PyQt6.QtWidgets import QMessageBox
-
 from views.order_status_view import OrderDetailDialog
-
 import re
 
 
@@ -38,7 +36,7 @@ class TransactionController:
         except Exception:
             self.record_view.show_form_error("Unable to add this product. Please try again.")
 
-        def handle_confirm_transaction(self):
+    def handle_confirm_transaction(self):
         if not self.record_view.confirm_btn.isEnabled():
             return
 
@@ -59,63 +57,41 @@ class TransactionController:
             total = self.record_view.current_total
 
             if is_online and not cust_name:
-                self.record_view.show_form_error(
-                    "Customer name is required for online orders."
-                )
+                self.record_view.show_form_error("Customer name is required for online orders.")
                 return
 
             if is_online and not cust_phone:
-                self.record_view.show_form_error(
-                    "Contact number is required for online orders."
-                )
+                self.record_view.show_form_error("Contact number is required for online orders.")
                 return
 
             if is_online and not re.fullmatch(r"\+?\d{10,15}", cust_phone):
-                self.record_view.show_form_error(
-                    "Invalid contact number format."
-                )
+                self.record_view.show_form_error("Invalid contact number format.")
                 return
 
             if is_online and not address:
-                self.record_view.show_form_error(
-                    "Delivery address is required for online orders."
-                )
+                self.record_view.show_form_error("Delivery address is required for online orders.")
                 return
 
             if is_online and not platform:
-                self.record_view.show_form_error(
-                    "Please select a selling platform."
-                )
+                self.record_view.show_form_error("Please select a selling platform.")
                 return
 
             if not cart:
-                self.record_view.show_form_error(
-                    "Please add at least one product."
-                )
+                self.record_view.show_form_error("Please add at least one product.")
                 return
 
             payment = self.record_view.get_payment_details()
 
             if not payment["method"]:
-                self.record_view.show_form_error(
-                    "Please select a payment method."
-                )
+                self.record_view.show_form_error("Please select a payment method.")
                 return
 
             if payment["method"] == "Cash" and payment["amount_paid"] < total:
-                self.record_view.show_form_error(
-                    "Amount paid must cover the transaction total."
-                )
+                self.record_view.show_form_error("Amount paid must cover the transaction total.")
                 return
 
-            if (
-                is_online
-                and payment["method"] != "Cash"
-                and not payment["reference_number"]
-            ):
-                self.record_view.show_form_error(
-                    "Reference number is required for electronic payments."
-                )
+            if is_online and payment["method"] != "Cash" and not payment["reference_number"]:
+                self.record_view.show_form_error("Reference number is required for electronic payments.")
                 return
 
             order_code = self.txn_model.create_order(
@@ -140,14 +116,11 @@ class TransactionController:
                 self.on_order_saved()
 
         except Exception:
-            self.record_view.show_form_error(
-                "Unable to save transaction. Please check the fields and try again."
-            )
+            self.record_view.show_form_error("Unable to save transaction. Please check the fields and try again.")
 
         finally:
             self.record_view.confirm_btn.setEnabled(True)
             self.record_view.confirm_btn.setText("Confirm Transaction")
-
 
     def load_orders(self):
         current_tab = self.status_view.get_active_tab()
