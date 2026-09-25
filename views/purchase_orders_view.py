@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QFrame, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QComboBox, QDialog)
-from PyQt6.QtCore import Qt, QTimer, QPoint, QModelIndex
+                             QHeaderView, QDialog)
+from PyQt6.QtCore import Qt
 from PyQt6.QtCore import pyqtSignal
 from datetime import datetime
+from views.styled_dropdown import StyledComboBox
 
 RESET = "background: transparent; border: none;"
 PLAIN_LABEL_STYLE = f"font-size: 12px; color: #777777; {RESET}"
@@ -11,50 +12,7 @@ TABLE_HEAD_STYLE = f"font-size: 11px; color: #8A8074; font-weight: 600; letter-s
 FIELD_STYLE = "padding: 9px 10px; font-size: 13px; border: 1px solid #D6CEBC; border-radius: 6px; background: white;"
 
 
-class SupplierComboBox(QComboBox):
-    def showPopup(self):
-        popup_view = self.view()
-        popup_view.setMinimumWidth(self.width())
-        popup_view.setMaximumHeight(170)
-        popup_view.setFrameShape(QFrame.Shape.NoFrame)
-        popup_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        popup_view.setStyleSheet("""
-            QListView {
-                background: white;
-                border: none;
-                outline: none;
-                padding: 3px;
-            }
-            QListView::item {
-                color: #2A2421;
-                background: white;
-                border: none;
-                outline: none;
-                padding: 5px 8px;
-                min-height: 28px;
-            }
-            QListView::item:hover {
-                background: #F5E8C4;
-            }
-            QListView::item:selected {
-                color: #8B6820;
-                background: #FFF2C8;
-                border: none;
-                outline: none;
-            }
-        """)
-        super().showPopup()
-        popup_view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        popup_view.clearSelection()
-        popup_view.setCurrentIndex(QModelIndex())
-        QTimer.singleShot(0, self._move_popup_below)
-
-    def _move_popup_below(self):
-        popup = self.view().window()
-        popup.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        popup.show()
-        popup.move(self.mapToGlobal(QPoint(0, self.height())))
+SupplierComboBox = StyledComboBox
 
 
 def labeled_field(label_text, widget):
@@ -112,35 +70,6 @@ class PurchaseOrdersView(QWidget):
         self.supplier_combo = SupplierComboBox()
         self.supplier_combo.addItems(["Select Supplier", "Manila Textile Co.",
                                       "Skincare Lab Ph", "Apparel Prime Inc."])
-        self.supplier_combo.setStyleSheet("""
-            QComboBox {
-                padding: 9px 10px;
-                font-size: 13px;
-                border: 1px solid #D6CEBC;
-                border-radius: 6px;
-                background: white;
-                color: #2A2421;
-            }
-            QComboBox:focus { border: 1px solid #C09E3B; }
-            QComboBox::drop-down { border: none; width: 22px; }
-            QComboBox QAbstractItemView {
-                background: white;
-                color: #2A2421;
-                border: none;
-                outline: none;
-                padding: 3px;
-                selection-background-color: #FFF2C8;
-                selection-color: #8B6820;
-            }
-            QComboBox QAbstractItemView::item {
-                min-height: 28px;
-                padding: 5px 8px;
-                border-radius: 3px;
-            }
-            QComboBox QAbstractItemView::item:hover {
-                background: #F5E8C4;
-            }
-        """)
         self.date_input = QLineEdit()
         self.date_input.setText(datetime.now().strftime("%b %d, %Y"))
         self.date_input.setStyleSheet(FIELD_STYLE)

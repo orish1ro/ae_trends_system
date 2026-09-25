@@ -1,9 +1,13 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QTableWidget,
     QTableWidgetItem, QHeaderView, QPushButton, QDateEdit, QFileDialog,
-    QMessageBox
+    QMessageBox, QToolButton, QGraphicsDropShadowEffect
 )
 from PyQt6.QtCore import Qt, QDate, pyqtSignal
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPalette, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
+from PyQt6.QtCore import QByteArray
+from views.styled_dropdown import StyledComboBox
 
 RESET = "background: transparent; border: none;"
 
@@ -37,24 +41,42 @@ class ReportsView(QWidget):
         layout.addLayout(header)
 
         filters = QHBoxLayout()
-        filters.setSpacing(8)
+        filters.setSpacing(10)
+        preset_label = QLabel("Quick Range")
         from_label = QLabel("From")
         to_label = QLabel("To")
-        for label in (from_label, to_label):
+        for label in (preset_label, from_label, to_label):
             label.setStyleSheet(f"font-size: 11px; color: #667085; {RESET}")
-        self.from_date = QDateEdit(QDate.currentDate().addMonths(-1))
+        self.preset_combo = StyledComboBox()
+        self.preset_combo.addItems(["Today", "Yesterday", "This Week", "This Month", "Custom"])
+        self.preset_combo.setFixedWidth(132)
+
+        self.from_date = QDateEdit(QDate.currentDate())
         self.to_date = QDateEdit(QDate.currentDate())
         for date_edit in (self.from_date, self.to_date):
             date_edit.setCalendarPopup(True)
             date_edit.setDisplayFormat("MMM d, yyyy")
-            date_edit.setFixedHeight(30)
+            date_edit.setFixedHeight(34)
             date_edit.setStyleSheet(self._date_style())
+            date_edit.setMaximumDate(QDate.currentDate())
+            self._style_calendar(date_edit)
+
+        self.from_date.dateChanged.connect(self._sync_to_minimum)
+        self.preset_combo.currentTextChanged.connect(self._apply_preset)
+
+        range_arrow = QLabel("→")
+        range_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        range_arrow.setStyleSheet(f"font-size: 16px; color: #A9872E; {RESET}")
         apply_btn = QPushButton("Apply Filter")
         apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        apply_btn.setFixedHeight(34)
         apply_btn.setStyleSheet(self._gold_button())
         apply_btn.clicked.connect(self._emit_filters)
+        filters.addWidget(preset_label)
+        filters.addWidget(self.preset_combo)
         filters.addWidget(from_label)
         filters.addWidget(self.from_date)
+        filters.addWidget(range_arrow)
         filters.addWidget(to_label)
         filters.addWidget(self.to_date)
         filters.addWidget(apply_btn)
@@ -96,7 +118,83 @@ class ReportsView(QWidget):
 
     @staticmethod
     def _date_style():
-        return "QDateEdit { padding: 5px 8px; border: 1px solid #DCCFBC; border-radius: 5px; background: #FFFDFB; color: #344054; font-size: 11px; }"
+        return """
+            QDateEdit { padding: 0 9px; border: 1px solid #D6CEBC; border-radius: 8px;
+                background: #FFFDFB; color: #2A2421; font-size: 12px; }
+            QDateEdit:hover { border-color: #C09E3B; }
+            QDateEdit:focus { border: 1px solid #C09E3B; }
+            QDateEdit::drop-down { width: 26px; border: none; }
+        """
+
+    @staticmethod
+    def _style_calendar(date_edit):
+        calendar = date_edit.calendarWidget()
+        calendar.setStyleSheet("""
+            QCalendarWidget { background: #FFFDFB; color: #2A2421; border: 1px solid #D6CEBC; }
+            QCalendarWidget QWidget#qt_calendar_navigationbar { background: #F6EEDC; padding: 5px; }
+            QCalendarWidget QToolButton { color: #2A2421; background: transparent; border: none; padding: 4px; }
+            QCalendarWidget QToolButton:hover { background: #EADCB9; border-radius: 4px; }
+            QCalendarWidget QSpinBox { color: #2A2421; background: #FFFDFB; border: 1px solid #D6CEBC; border-radius: 4px; padding: 2px; }
+            QCalendarWidget QAbstractItemView { background: #FFFDFB; color: #665B50; selection-background-color: #B38E36; selection-color: #FFFFFF; outline: none; border-radius: 10px; }
+            QCalendarWidget QAbstractItemView:enabled { selection-background-color: #B38E36; selection-color: #FFFFFF; }
+            QCalendarWidget QAbstractItemView::item:hover { background: #F5E8C4; border-radius: 10px; }
+        """)
+        palette = calendar.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#FFFDFB"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#FFFDFB"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#665B50"))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor("#2A2421"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#B38E36"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
+        calendar.setPalette(palette)
+        shadow = QGraphicsDropShadowEffect(calendar)
+        shadow.setBlurRadius(16)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 20))
+        calendar.setGraphicsEffect(shadow)
+        for object_name, direction in (("qt_calendar_prevmonth", "left"), ("qt_calendar_nextmonth", "right")):
+            button = calendar.findChild(QToolButton, object_name)
+            if button:
+                button.setText("")
+                button.setIcon(QIcon(ReportsView._chevron_pixmap(direction)))
+                button.setIconSize(button.sizeHint())
+
+    @staticmethod
+    def _chevron_pixmap(direction):
+        path = "M10 2L4 8L10 14" if direction == "left" else "M6 2L12 8L6 14"
+        svg = f'''<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+            <path d="{path}" fill="none" stroke="#6D5A27" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>'''.encode("utf-8")
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        renderer = QSvgRenderer(QByteArray(svg))
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return pixmap
+
+    def _sync_to_minimum(self, from_date):
+        self.to_date.setMinimumDate(from_date)
+        if self.to_date.date() < from_date:
+            self.to_date.setDate(from_date)
+
+    def _apply_preset(self, preset):
+        today = QDate.currentDate()
+        if preset == "Today":
+            start = end = today
+        elif preset == "Yesterday":
+            start = end = today.addDays(-1)
+        elif preset == "This Week":
+            start = today.addDays(1 - today.dayOfWeek())
+            end = today
+        elif preset == "This Month":
+            start = QDate(today.year(), today.month(), 1)
+            end = today
+        else:
+            return
+        self.from_date.setDate(start)
+        self.to_date.setDate(end)
+        self._emit_filters()
 
     @staticmethod
     def _card_style():

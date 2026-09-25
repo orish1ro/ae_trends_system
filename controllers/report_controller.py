@@ -1,4 +1,5 @@
 import csv
+from PyQt6.QtCore import QDate
 
 from models.inventory_model import compute_status
 from models.transaction_model import TransactionModel, nice_date
@@ -36,13 +37,21 @@ class ReportController:
                 """,
                 (from_date, to_date),
             ).fetchall()
+            today_sales = conn.execute(
+                "SELECT COALESCE(SUM(TotalAmount), 0) FROM Orders WHERE date(OrderDate) = date('now')"
+            ).fetchone()[0]
+            yesterday_sales = conn.execute(
+                "SELECT COALESCE(SUM(TotalAmount), 0) FROM Orders WHERE date(OrderDate) = date('now', '-1 day')"
+            ).fetchone()[0]
             products = [dict(row) for row in conn.execute("SELECT * FROM Product")]
 
         rows = []
         for order in order_rows:
+            chart_label = order["OrderDate"][11:16] if from_date == to_date else nice_date(order["OrderDate"]).replace(",", "")
             rows.append({
                 "order": f"ORD-{order['OrderID']:04d}",
                 "date": nice_date(order["OrderDate"]),
+                "chart_label": chart_label,
                 "customer": order["CustomerName"],
                 "type": "Walk-in" if order["PlatformName"] == "Walk-in" else "Online",
                 "items": order["UnitsSold"],
@@ -73,10 +82,27 @@ class ReportController:
         self.report_view.display_low_stock(low_stock_items)
         self.dashboard_view.display_recent_transactions(self.txn_model.get_recent_orders(6))
         self.dashboard_view.update_metrics(
-            total_sales, len(low_stock_items),
+            today_sales, len(low_stock_items),
             sum(1 for row in rows if row["status"] == "Pending"),
             expiring_count,
+            ((today_sales - yesterday_sales) / yesterday_sales * 100)
+            if yesterday_sales else None,
         )
+        self.dashboard_view.update_charts(rows)
+
+    def load_dashboard_range(self, preset):
+        today = QDate.currentDate()
+        if preset == "Today":
+            start = today
+        elif preset == "This Week":
+            start = today.addDays(1 - today.dayOfWeek())
+        else:
+            start = QDate(today.year(), today.month(), 1)
+        from_date = start.toString("yyyy-MM-dd")
+        to_date = today.toString("yyyy-MM-dd")
+        self.report_view.from_date.setDate(start)
+        self.report_view.to_date.setDate(today)
+        self.load_reports(from_date, to_date)
 
     def export_report(self, path):
         headers = ["Order", "Date", "Customer", "Type", "Items", "Total", "Status"]

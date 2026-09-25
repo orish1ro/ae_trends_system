@@ -127,6 +127,13 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.transaction_history_view)
         self.stacked_widget.addWidget(self.reports_view)
 
+        self.dashboard_view.new_transaction_requested.connect(lambda: self.switch_view(1))
+        self.dashboard_view.inventory_requested.connect(lambda: self.switch_view(2))
+        self.dashboard_view.expiring_requested.connect(lambda: self.switch_view(2))
+        self.dashboard_view.order_status_requested.connect(lambda: self.switch_view(4))
+        self.dashboard_view.view_all_requested.connect(lambda: self.switch_view(4))
+        self.dashboard_view.reports_requested.connect(lambda: self.switch_view(5))
+
     def switch_view(self, index):
         for i, btn in enumerate(self.nav_btns):
             btn.setChecked(i == index)

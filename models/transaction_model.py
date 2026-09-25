@@ -123,7 +123,8 @@ class TransactionModel:
         return row["PlatformID"] if row else 1
 
     def create_order(self, customer_name, customer_phone, address, order_type,
-                      total, payment_method, cart_items):
+                      total, payment_method, cart_items, amount_paid=None,
+                      reference_number="", receipt_image=""):
         with self.db.get_connection() as conn:
             customer_id = self._find_or_create_customer(conn, customer_name,
                                                         customer_phone, address)
@@ -154,9 +155,12 @@ class TransactionModel:
 
             conn.execute(
                 """INSERT INTO Payment (OrderID, PaymentMethod, AmountPaid,
-                                        PaymentStatus)
-                   VALUES (?, ?, ?, 'Paid')""",
-                (order_id, payment_method, total),
+                                        PaymentStatus, ReferenceNumber,
+                                        ReceiptImageURL)
+                   VALUES (?, ?, ?, 'Paid', ?, ?)""",
+                (order_id, payment_method,
+                 total if amount_paid is None else amount_paid,
+                 reference_number or None, receipt_image or None),
             )
             conn.commit()
             return order_code(order_id)
