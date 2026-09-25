@@ -1,9 +1,11 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, QPushButton, QMessageBox
 
 class InventoryController:
-    def __init__(self, model, view):
+    def __init__(self, model, view, on_data_changed=None):
         self.model = model
         self.view = view
+        self.on_data_changed = on_data_changed  # call after any write, so Dashboard/Reports/other
+                                                 # pages that also depend on Product data stay in sync
         
         self.view.search_input.textChanged.connect(self.load_products)
         self.view.category_filter.currentTextChanged.connect(self.load_products)
@@ -16,6 +18,15 @@ class InventoryController:
         status = self.view.status_filter.currentText()
         products = self.model.get_all_products(search, category, status)
         self.view.display_products(products)
+
+    def _notify_change(self):
+        """Called after a write. Uses the app-wide refresh if one was
+        provided (so Dashboard/Reports update too); otherwise just
+        refreshes this page's own table."""
+        if self.on_data_changed:
+            self.on_data_changed()
+        else:
+            self.load_products()
 
     def open_add_product_dialog(self):
         dialog = QDialog(self.view)
@@ -52,7 +63,7 @@ class InventoryController:
                     raise ValueError("Product name is required.")
                 self.model.add_product(name, cat, price, stock, 10, exp)
                 dialog.accept()
-                self.load_products()
+                self._notify_change()
             except ValueError as e:
                 QMessageBox.warning(dialog, "Input Error", str(e))
 

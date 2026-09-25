@@ -6,6 +6,7 @@ from views.inventory_view import InventoryView
 from views.purchase_orders_view import PurchaseOrdersView
 from views.order_status_view import OrderStatusView
 from views.reports_view import ReportsView
+from views.transaction_history_view import TransactionHistoryView
 
 class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
@@ -48,7 +49,8 @@ class MainWindow(QMainWindow):
             ("Inventory", 2),
             ("Purchase Orders", 3),
             ("Order Status", 4),
-            ("Reports", 5),
+            ("Transaction History", 5),
+            ("Reports", 6),
         ]
 
         for text, index in modules:
@@ -114,6 +116,7 @@ class MainWindow(QMainWindow):
         self.inventory_view = InventoryView()
         self.purchase_orders_view = PurchaseOrdersView()
         self.order_status_view = OrderStatusView()
+        self.transaction_history_view = TransactionHistoryView()
         self.reports_view = ReportsView()
 
         self.stacked_widget.addWidget(self.dashboard_view)
@@ -121,6 +124,7 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.inventory_view)
         self.stacked_widget.addWidget(self.purchase_orders_view)
         self.stacked_widget.addWidget(self.order_status_view)
+        self.stacked_widget.addWidget(self.transaction_history_view)
         self.stacked_widget.addWidget(self.reports_view)
 
     def switch_view(self, index):
