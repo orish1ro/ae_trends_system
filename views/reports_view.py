@@ -29,6 +29,7 @@ WARNING_BG = "#FEF3DC"
 DANGER = "#EF4444"
 DANGER_BG = "#FDEAEA"
 PAGE_SIZE = 8
+SMALL_PAGE_SIZE = 5    # Top Products / Inventory cards are shorter, so fewer rows per page
 
 FONT_FAMILY = "Inter, 'Plus Jakarta Sans', 'Manrope', sans-serif"
 
@@ -74,6 +75,10 @@ class ReportsView(QWidget):
         self._txn_page = 0
         self._txn_sort_col = 1
         self._txn_sort_asc = False
+        self._top_products_rows = []
+        self._top_products_page = 0
+        self._inventory_rows = []
+        self._inventory_page = 0
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -397,6 +402,24 @@ class ReportsView(QWidget):
         )
         self.top_products_table.setMinimumHeight(230)
         v.addWidget(self.top_products_table)
+
+        pager_row = QHBoxLayout()
+        pager_row.setContentsMargins(16, 8, 16, 12)
+        self.top_products_page_label = QLabel("0 of 0")
+        self.top_products_page_label.setStyleSheet(f"font-size: 11px; color: {MUTED}; {RESET}")
+        prev_btn = QPushButton("‹ Prev")
+        next_btn = QPushButton("Next ›")
+        for btn in (prev_btn, next_btn):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(28)
+            btn.setStyleSheet(self._toggle_button())
+        prev_btn.clicked.connect(lambda: self._change_top_products_page(-1))
+        next_btn.clicked.connect(lambda: self._change_top_products_page(1))
+        pager_row.addWidget(self.top_products_page_label)
+        pager_row.addStretch()
+        pager_row.addWidget(prev_btn)
+        pager_row.addWidget(next_btn)
+        v.addLayout(pager_row)
         return card
 
     # ------------------------------------------------------------------ #
@@ -416,6 +439,24 @@ class ReportsView(QWidget):
         )
         self.inventory_table.setMinimumHeight(230)
         v.addWidget(self.inventory_table)
+
+        pager_row = QHBoxLayout()
+        pager_row.setContentsMargins(16, 8, 16, 12)
+        self.inventory_page_label = QLabel("0 of 0")
+        self.inventory_page_label.setStyleSheet(f"font-size: 11px; color: {MUTED}; {RESET}")
+        prev_btn = QPushButton("‹ Prev")
+        next_btn = QPushButton("Next ›")
+        for btn in (prev_btn, next_btn):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(28)
+            btn.setStyleSheet(self._toggle_button())
+        prev_btn.clicked.connect(lambda: self._change_inventory_page(-1))
+        next_btn.clicked.connect(lambda: self._change_inventory_page(1))
+        pager_row.addWidget(self.inventory_page_label)
+        pager_row.addStretch()
+        pager_row.addWidget(prev_btn)
+        pager_row.addWidget(next_btn)
+        v.addLayout(pager_row)
         return card
 
     # ------------------------------------------------------------------ #
@@ -797,7 +838,7 @@ class ReportsView(QWidget):
         self.pl_chart.set_data(
             labels,
             [
-                {"name": "Revenue", "color": GOLD, "values": [p["revenue"] for p in series], "fill": True},
+                {"name": "Revenue", "color": GOLD, "values": [p["revenue"] for p in series], "fill": False},
                 {"name": "COGS", "color": DANGER, "values": [p["cogs"] for p in series], "fill": False},
                 {"name": "Gross Profit", "color": SUCCESS, "values": [p["gross_profit"] for p in series], "fill": False},
             ],
@@ -831,13 +872,28 @@ class ReportsView(QWidget):
         self._set_donut_legend(segments)
 
     def _update_top_products(self, products):
+        self._top_products_rows = products or []
+        self._top_products_page = 0
+        self._render_top_products_page()
+
+    def _change_top_products_page(self, delta):
+        max_page = max(0, (len(self._top_products_rows) - 1) // SMALL_PAGE_SIZE)
+        self._top_products_page = min(max(0, self._top_products_page + delta), max_page)
+        self._render_top_products_page()
+
+    def _render_top_products_page(self):
         table = self.top_products_table
-        if not products:
+        rows = self._top_products_rows
+        if not rows:
             table.setRowCount(0)
             self._empty_state(table, "No sales yet", "Top-selling products will appear here once you record sales.")
+            self.top_products_page_label.setText("0 of 0")
             return
-        table.setRowCount(len(products))
-        for row, p in enumerate(products):
+
+        start = self._top_products_page * SMALL_PAGE_SIZE
+        page_rows = rows[start:start + SMALL_PAGE_SIZE]
+        table.setRowCount(len(page_rows))
+        for row, p in enumerate(page_rows):
             table.setItem(row, 0, QTableWidgetItem(p["name"]))
             table.setItem(row, 1, QTableWidgetItem(f"{p['qty']} sold"))
             revenue_item = QTableWidgetItem(money(p["revenue"]))
@@ -851,14 +907,33 @@ class ReportsView(QWidget):
             margin_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             table.setItem(row, 4, margin_item)
 
+        total_pages = max(1, (len(rows) - 1) // SMALL_PAGE_SIZE + 1)
+        self.top_products_page_label.setText(
+            f"Page {self._top_products_page + 1} of {total_pages} · {len(rows)} products")
+
     def _update_inventory(self, items):
+        self._inventory_rows = items or []
+        self._inventory_page = 0
+        self._render_inventory_page()
+
+    def _change_inventory_page(self, delta):
+        max_page = max(0, (len(self._inventory_rows) - 1) // SMALL_PAGE_SIZE)
+        self._inventory_page = min(max(0, self._inventory_page + delta), max_page)
+        self._render_inventory_page()
+
+    def _render_inventory_page(self):
         table = self.inventory_table
-        if not items:
+        rows = self._inventory_rows
+        if not rows:
             table.setRowCount(0)
             self._empty_state(table, "No inventory data", "Add products to see stock health here.")
+            self.inventory_page_label.setText("0 of 0")
             return
-        table.setRowCount(len(items))
-        for row, item in enumerate(items):
+
+        start = self._inventory_page * SMALL_PAGE_SIZE
+        page_rows = rows[start:start + SMALL_PAGE_SIZE]
+        table.setRowCount(len(page_rows))
+        for row, item in enumerate(page_rows):
             table.setItem(row, 0, QTableWidgetItem(item["name"]))
             table.setItem(row, 1, QTableWidgetItem(item["category"] or "—"))
             table.setItem(row, 2, QTableWidgetItem(f"{item['stock']} pcs"))
@@ -870,3 +945,6 @@ class ReportsView(QWidget):
             kind = {"Healthy": "success", "Low Stock": "warning", "Critical": "danger"}.get(item["status"], "muted")
             self._set_badge_cell(table, row, 6, item["status"], kind)
 
+        total_pages = max(1, (len(rows) - 1) // SMALL_PAGE_SIZE + 1)
+        self.inventory_page_label.setText(
+            f"Page {self._inventory_page + 1} of {total_pages} · {len(rows)} products")

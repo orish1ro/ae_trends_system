@@ -5,7 +5,7 @@ consistent with the rest of the app and don't add a new runtime dependency.
 """
 from PyQt6.QtWidgets import QWidget, QToolTip
 from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath
+from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath, QLinearGradient
 
 GOLD = "#C7A53B"
 SUCCESS = "#22C55E"
@@ -36,6 +36,26 @@ class LineAreaChart(QWidget):
         self.update()
 
     @staticmethod
+    def _smooth_path(points):
+        """Build a smoothly-curved path through the given points (Catmull-Rom
+        converted to cubic Beziers), instead of sharp straight-line segments.
+        This is the same technique used by most polished dashboard charts."""
+        path = QPainterPath()
+        if not points:
+            return path
+        path.moveTo(points[0])
+        if len(points) == 1:
+            return path
+        pts = [points[0]] + points + [points[-1]]
+        tension = 6.0
+        for i in range(1, len(pts) - 2):
+            p0, p1, p2, p3 = pts[i - 1], pts[i], pts[i + 1], pts[i + 2]
+            c1 = QPointF(p1.x() + (p2.x() - p0.x()) / tension, p1.y() + (p2.y() - p0.y()) / tension)
+            c2 = QPointF(p2.x() - (p3.x() - p1.x()) / tension, p2.y() - (p3.y() - p1.y()) / tension)
+            path.cubicTo(c1, c2, p2)
+        return path
+
+    @staticmethod
     def _fmt_short(v):
         av = abs(v)
         if av >= 1_000_000:
@@ -56,7 +76,8 @@ class LineAreaChart(QWidget):
             painter.end()
             return
 
-        margin_left, margin_right, margin_top, margin_bottom = 58, 16, 14, 28
+        # FIX: Increased margin_top from 14 to 36 to make room for the legend!
+        margin_left, margin_right, margin_top, margin_bottom = 58, 16, 36, 28
         plot_rect = QRectF(margin_left, margin_top,
                             rect.width() - margin_left - margin_right,
                             rect.height() - margin_top - margin_bottom)
@@ -102,26 +123,28 @@ class LineAreaChart(QWidget):
                         plot_rect.bottom() - (v / max_val) * plot_rect.height())
                 for i, v in enumerate(values)
             ]
+            smooth = self._smooth_path(points)
+
             if s.get("fill"):
-                fill_color = QColor(color)
-                fill_color.setAlpha(32)
-                path = QPainterPath()
-                path.moveTo(points[0].x(), plot_rect.bottom())
-                for p in points:
-                    path.lineTo(p)
-                path.lineTo(points[-1].x(), plot_rect.bottom())
-                path.closeSubpath()
-                painter.fillPath(path, fill_color)
+                fill_path = QPainterPath(smooth)
+                fill_path.lineTo(points[-1].x(), plot_rect.bottom())
+                fill_path.lineTo(points[0].x(), plot_rect.bottom())
+                fill_path.closeSubpath()
+                gradient = QLinearGradient(0, plot_rect.top(), 0, plot_rect.bottom())
+                top_color = QColor(color)
+                top_color.setAlpha(70)
+                bottom_color = QColor(color)
+                bottom_color.setAlpha(0)
+                gradient.setColorAt(0, top_color)
+                gradient.setColorAt(1, bottom_color)
+                painter.fillPath(fill_path, QBrush(gradient))
 
             pen = QPen(color, 2.4)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(pen)
-            path = QPainterPath()
-            path.moveTo(points[0])
-            for p in points[1:]:
-                path.lineTo(p)
-            painter.drawPath(path)
+            painter.drawPath(smooth)
 
             if len(points) <= 45:
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -138,7 +161,8 @@ class LineAreaChart(QWidget):
         # Legend
         if len(self.series) > 1:
             lx = plot_rect.left()
-            ly = 2
+            # FIX: Lowered the legend into the newly created top margin space
+            ly = 6 
             painter.setFont(QFont("Inter", 8, QFont.Weight.Bold))
             for s in self.series:
                 painter.setPen(Qt.PenStyle.NoPen)
