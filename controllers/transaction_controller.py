@@ -22,6 +22,7 @@ class TransactionController:
         
         # UI Action Connections
         self.status_view.status_changed.connect(self.handle_status_update)
+        self.status_view.confirm_requested.connect(self.handle_order_confirmation)
         self.status_view.view_requested.connect(self.open_order_popup)
 
         self.load_orders()
@@ -129,12 +130,58 @@ class TransactionController:
         orders = self.txn_model.get_all_orders(current_tab, search)
         self.status_view.display_orders(orders)
         
-    def handle_status_update(self, order_code, new_status):
-        success = self.txn_model.update_order_status(order_code, new_status)
+    def handle_order_confirmation(self, order_code):
+        """
+        Confirm button:
+        Order Status -> Transaction History
+        """
+        success = self.txn_model.update_order_status(
+            order_code,
+            "Completed"
+        )
+
         if success:
-            # Refresh Order Status board to filter out terminal states instantly
+            QMessageBox.information(
+                self.status_view,
+                "Transaction Confirmed",
+                "Order has been moved to Transaction History."
+            )
+
             self.load_orders()
-            # If the user has wired up on_order_saved, trigger the history board to update
+
+        if self.on_order_saved:
+            self.on_order_saved()
+
+    def handle_status_update(self, order_code, new_status):
+        """
+        Only allow progress statuses.
+        Completed/Refunded/Cancelled must NOT happen here.
+        """
+        allowed = [
+            "Pending",
+            "Paid",
+            "Prepared",
+            "Shipped"
+        ]
+
+        if new_status not in allowed:
+            QMessageBox.warning(
+                self.status_view,
+                "Invalid Status",
+                "Use Confirm Transaction button to complete the order."
+            )
+
+            self.load_orders()
+            return
+
+        success = self.txn_model.update_order_status(
+            order_code,
+            new_status
+        )
+
+        if success:
+            self.load_orders()
+
             if self.on_order_saved:
                 self.on_order_saved()
         

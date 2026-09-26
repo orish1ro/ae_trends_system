@@ -105,7 +105,6 @@ class ReportsView(QWidget):
 
         layout.addWidget(self._build_top_products_card())
         layout.addWidget(self._build_inventory_card())
-        layout.addWidget(self._build_expense_card())
         layout.addWidget(self._build_transactions_card())
 
     # ------------------------------------------------------------------ #
@@ -230,8 +229,6 @@ class ReportsView(QWidget):
         self.kpi_revenue = self._kpi_card(row, "Total Revenue", "growth")
         self.kpi_cogs = self._kpi_card(row, "Cost of Goods Sold", "sub")
         self.kpi_gross = self._kpi_card(row, "Gross Profit", "margin")
-        self.kpi_opex = self._kpi_card(row, "Operating Expenses", "sub")
-        self.kpi_net = self._kpi_card(row, "Net Profit", "status")
         return row
 
     def _kpi_card(self, parent_layout, title, footer_kind):
@@ -419,28 +416,6 @@ class ReportsView(QWidget):
         )
         self.inventory_table.setMinimumHeight(230)
         v.addWidget(self.inventory_table)
-        return card
-
-    # ------------------------------------------------------------------ #
-    # EXPENSE SUMMARY
-    # ------------------------------------------------------------------ #
-    def _build_expense_card(self):
-        card = QFrame()
-        card.setStyleSheet(self._card_style())
-        v = QVBoxLayout(card)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(0)
-        title = QLabel("Expense Summary")
-        title.setStyleSheet(f"font-size: 13px; font-weight: 800; padding: 13px 16px 8px; color: {INK}; {RESET}")
-        v.addWidget(title)
-        note = QLabel("Inventory Purchase is calculated automatically from received Purchase Orders. "
-                       "Other categories reflect entries recorded in the Expense table.")
-        note.setWordWrap(True)
-        note.setStyleSheet(f"font-size: 10px; color: {MUTED}; padding: 0 16px 8px; {RESET}")
-        v.addWidget(note)
-        self.expense_table = self._table(["CATEGORY", "AMOUNT", "% OF TOTAL"])
-        self.expense_table.setMinimumHeight(200)
-        v.addWidget(self.expense_table)
         return card
 
     # ------------------------------------------------------------------ #
@@ -784,7 +759,6 @@ class ReportsView(QWidget):
         self._update_order_status(data["order_status"])
         self._update_top_products(data["top_products"])
         self._update_inventory(data["inventory"])
-        self._update_expenses(data["expenses"])
         self._txn_rows = data["transactions"]
         self._apply_txn_filters()
         self.set_meta(data.get("period_label", "—"), data.get("last_updated", "—"))
@@ -808,19 +782,6 @@ class ReportsView(QWidget):
         self.kpi_gross["footer"].setText(f"{kpis['gross_margin']:.1f}% margin")
         self.kpi_gross["footer"].setStyleSheet(f"font-size: 10.5px; font-weight: 700; color: {GOLD_HOVER}; {RESET}")
 
-        self.kpi_opex["value"].setText(money(kpis["opex"]))
-        self.kpi_opex["footer"].setText("Rent, utilities, salary & more")
-
-        self.kpi_net["value"].setText(money(kpis["net_profit"]))
-        profitable = kpis["net_profit"] >= 0
-        self.kpi_net["footer"].setText("Profitable ▲" if profitable else "Operating at a loss ▼")
-        self.kpi_net["footer"].setStyleSheet(
-            f"font-size: 10.5px; font-weight: 700; color: {SUCCESS if profitable else DANGER}; {RESET}"
-        )
-        self.kpi_net["value"].setStyleSheet(
-            f"font-size: 19px; font-weight: 800; color: {INK if profitable else DANGER}; {RESET}"
-        )
-
     def update_pl_chart(self, series, granularity):
         for btn in self.pl_group.buttons():
             btn.setChecked(btn.text() == granularity)
@@ -830,15 +791,15 @@ class ReportsView(QWidget):
             point = series[idx]
             return (f"Date: {label}\n"
                     f"Revenue: {money(point['revenue'])}\n"
-                    f"Expenses: {money(point['expenses'])}\n"
-                    f"Profit: {money(point['net_profit'])}")
+                    f"COGS: {money(point['cogs'])}\n"
+                    f"Gross Profit: {money(point['gross_profit'])}")
 
         self.pl_chart.set_data(
             labels,
             [
                 {"name": "Revenue", "color": GOLD, "values": [p["revenue"] for p in series], "fill": True},
-                {"name": "Expenses", "color": DANGER, "values": [p["expenses"] for p in series], "fill": False},
-                {"name": "Net Profit", "color": SUCCESS, "values": [p["net_profit"] for p in series], "fill": False},
+                {"name": "COGS", "color": DANGER, "values": [p["cogs"] for p in series], "fill": False},
+                {"name": "Gross Profit", "color": SUCCESS, "values": [p["gross_profit"] for p in series], "fill": False},
             ],
             tooltip_formatter=tooltip,
         )
@@ -909,18 +870,3 @@ class ReportsView(QWidget):
             kind = {"Healthy": "success", "Low Stock": "warning", "Critical": "danger"}.get(item["status"], "muted")
             self._set_badge_cell(table, row, 6, item["status"], kind)
 
-    def _update_expenses(self, expenses):
-        table = self.expense_table
-        if not expenses:
-            table.setRowCount(0)
-            self._empty_state(table, "No expenses recorded", "Log rent, utilities, or other costs to see them here.")
-            return
-        table.setRowCount(len(expenses))
-        for row, e in enumerate(expenses):
-            table.setItem(row, 0, QTableWidgetItem(e["category"]))
-            amount_item = QTableWidgetItem(money(e["amount"]))
-            amount_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            table.setItem(row, 1, amount_item)
-            pct_item = QTableWidgetItem(f"{e['percent']:.1f}%")
-            pct_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            table.setItem(row, 2, pct_item)

@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import QMessageBox
 
 from models.inventory_model import compute_status
 from models.transaction_model import TransactionModel, nice_date
-from models.expense_model import ExpenseModel, CATEGORIES as EXPENSE_CATEGORIES
 
 # Orders don't have a literal "Cancelled" status in the schema -- map the
 # real OrderStatus values down to the 3-state view the Reports page shows.
@@ -36,7 +35,6 @@ class ReportController:
         self.report_view = report_view
         self.dashboard_view = dashboard_view
         self.txn_model = TransactionModel(db)
-        self.expense_model = ExpenseModel(db)
         self.current_rows = []
         self._pl_daily = []
         self._pl_granularity = "Daily"
@@ -235,22 +233,11 @@ class ReportController:
                 "margin": margin,
             })
 
-        # --- COGS / gross profit / operating expenses / net profit ---
+        # --- COGS / gross profit ---
         cogs = sum(cost_by_order.values())
         inventory_spend = sum(po_spend_by_day.values())
         gross_profit = total_sales - cogs
         gross_margin = (gross_profit / total_sales * 100) if total_sales else 0.0
-
-        expense_totals = self.expense_model.get_totals_by_category(from_date, to_date)
-        opex = sum(expense_totals.values())
-        net_profit = gross_profit - opex
-
-        expenses = [{"category": "Inventory Purchase", "amount": inventory_spend}]
-        for category in EXPENSE_CATEGORIES:
-            expenses.append({"category": category, "amount": expense_totals.get(category, 0.0)})
-        expense_pct_base = sum(e["amount"] for e in expenses) or 1
-        for e in expenses:
-            e["percent"] = e["amount"] / expense_pct_base * 100
 
         kpis = {
             "revenue": total_sales,
@@ -259,12 +246,9 @@ class ReportController:
             "inventory_spend": inventory_spend,
             "gross_profit": gross_profit,
             "gross_margin": gross_margin,
-            "opex": opex,
-            "net_profit": net_profit,
         }
 
         # --- daily P&L / sales trend series across the whole selected range ---
-        expense_daily = self.expense_model.get_daily_totals(from_date, to_date)
         order_count_by_day = {}
         for row in rows:
             order_count_by_day[row["chart_label"]] = order_count_by_day.get(row["chart_label"], 0) + 1
@@ -274,15 +258,12 @@ class ReportController:
             key = day.strftime("%Y-%m-%d")
             revenue = revenue_by_day.get(key, 0.0)
             cost = cost_by_day.get(key, 0.0)
-            expense = expense_daily.get(key, 0.0)
             daily_series.append({
                 "date": key,
                 "label": day.strftime("%b %d"),
                 "revenue": revenue,
                 "cogs": cost,
-                "expenses": expense,
                 "gross_profit": revenue - cost,
-                "net_profit": revenue - cost - expense,
                 "orders": order_count_by_day.get(key, 0),
             })
 
@@ -302,7 +283,6 @@ class ReportController:
             "order_status": order_status_counts,
             "top_products": top_products,
             "inventory": inventory_health,
-            "expenses": expenses,
             "transactions": display_rows,
             "period_label": f"{nice_date(from_date)} – {nice_date(to_date)}",
             "last_updated": datetime.now().strftime("%I:%M %p").lstrip("0"),
@@ -319,7 +299,36 @@ class ReportController:
             inventory_value=inventory_value,
             expiring_days=nearest_expiring_days,
         )
-        self.dashboard_view.update_charts(rows)
+        # --- rolling 7-day trend for the Sales Performance chart ---
+        # Deliberately independent of the "Today/This Week/This Month" filter
+        # above: a trend line needs several points to draw a line at all, so
+        # picking "Today" (a single day) must not collapse it to one dot.
+        chart_to_dt = datetime.now().date()
+        chart_from_dt = chart_to_dt - timedelta(days=6)
+        chart_from_str, chart_to_str = chart_from_dt.isoformat(), chart_to_dt.isoformat()
+
+        with self.db.get_connection() as conn:
+            chart_rows = conn.execute(
+                """
+                SELECT date(OrderDate) AS d, COALESCE(SUM(TotalAmount), 0) AS Total
+                FROM Orders
+                WHERE date(OrderDate) BETWEEN date(?) AND date(?)
+                GROUP BY date(OrderDate)
+                """,
+                (chart_from_str, chart_to_str),
+            ).fetchall()
+        chart_revenue_by_day = {r["d"]: r["Total"] for r in chart_rows}
+
+        chart_daily_series = []
+        for day in _daterange(chart_from_str, chart_to_str):
+            key = day.strftime("%Y-%m-%d")
+            chart_daily_series.append({
+                "date": key,
+                "label": day.strftime("%b %d"),
+                "revenue": chart_revenue_by_day.get(key, 0.0),
+            })
+
+        self.dashboard_view.update_charts(rows, chart_daily_series)
         self.dashboard_view.update_top_products(
             [{"name": tp["name"], "qty": tp["qty"], "revenue": tp["revenue"]} for tp in top_products[:5]]
         )
@@ -343,18 +352,16 @@ class ReportController:
             key = key_date.isoformat()
             if key not in buckets:
                 buckets[key] = {"date": key, "label": label, "revenue": 0.0, "cogs": 0.0,
-                                 "expenses": 0.0, "gross_profit": 0.0, "net_profit": 0.0, "orders": 0}
+                                 "gross_profit": 0.0, "orders": 0}
                 order.append(key)
             b = buckets[key]
             b["revenue"] += point["revenue"]
             b["cogs"] += point["cogs"]
-            b["expenses"] += point["expenses"]
             b["orders"] += point["orders"]
         result = []
         for key in order:
             b = buckets[key]
             b["gross_profit"] = b["revenue"] - b["cogs"]
-            b["net_profit"] = b["gross_profit"] - b["expenses"]
             result.append(b)
         return result
 

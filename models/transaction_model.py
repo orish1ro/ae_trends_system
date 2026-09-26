@@ -33,6 +33,11 @@ class TransactionModel:
                 JOIN Customer c ON o.CustomerID = c.CustomerID
                 JOIN Platform p ON o.PlatformID = p.PlatformID
                 WHERE c.FullName LIKE ?
+                AND o.OrderStatus IN (
+                    'Completed',
+                    'Refunded',
+                    'Cancelled'
+                )
                 ORDER BY o.OrderDate DESC
             """
             cursor.execute(query, (f"%{search_query}%",))
@@ -50,7 +55,12 @@ class TransactionModel:
             LEFT JOIN Payment pm ON pm.OrderID = o.OrderID
             LEFT JOIN OrderDetails od ON o.OrderID = od.OrderID
             LEFT JOIN Product pr ON od.ProductID = pr.ProductID
-            WHERE o.OrderStatus NOT IN ('Completed', 'Cancelled', 'Refunded')
+            WHERE o.OrderStatus IN (
+            'Pending',
+            'Paid',
+            'Prepared',
+            'Shipped'
+           )
         """
         params = []
         if filter_type == "Online Shipments":
@@ -82,18 +92,61 @@ class TransactionModel:
         ]
 
     def get_recent_orders(self, limit=6):
-        return self.get_all_orders("All Orders")[:limit]
+        """Most recent orders of ANY status - used by the Dashboard's Recent
+        Transactions panel. Deliberately separate from get_all_orders(), which
+        hides Completed/Cancelled/Refunded orders for the active-order queue."""
+        query = """
+            SELECT o.OrderID, o.OrderDate, o.TotalAmount, o.OrderStatus,
+                   c.FullName AS CustomerName, pm.PaymentMethod,
+                   GROUP_CONCAT(pr.ProductName || ' (x' || od.Quantity || ')', ', ') AS ItemsBought
+            FROM Orders o
+            JOIN Customer c ON c.CustomerID = o.CustomerID
+            LEFT JOIN Payment pm ON pm.OrderID = o.OrderID
+            LEFT JOIN OrderDetails od ON o.OrderID = od.OrderID
+            LEFT JOIN Product pr ON od.ProductID = pr.ProductID
+            GROUP BY o.OrderID
+            ORDER BY o.OrderID DESC
+            LIMIT ?
+        """
+        with self.db.get_connection() as conn:
+            rows = conn.execute(query, (limit,)).fetchall()
+
+        return [
+            {
+                "order_code": order_code(r["OrderID"]),
+                "customer_name": r["CustomerName"],
+                "items": r["ItemsBought"] if r["ItemsBought"] else "None",
+                "order_date": nice_date(r["OrderDate"]),
+                "total_amount": r["TotalAmount"],
+                "status": r["OrderStatus"],
+                "payment_method": r["PaymentMethod"],
+            }
+            for r in rows
+        ]
 
     def update_order_status(self, order_code, new_status):
-        """Updates an order's status in the database on the fly."""
+        """Updates an order status safely."""
+        allowed_status = [
+            "Pending",
+            "Paid",
+            "Prepared",
+            "Shipped",
+            "Completed",
+            "Refunded",
+            "Cancelled"
+        ]
+
+        if new_status not in allowed_status:
+            return False
+
         try:
-            order_id = int(order_code.split('-')[1])
+            order_id = int(order_code.split("-")[1])
         except (ValueError, IndexError):
             return False
-            
+
         with self.db.get_connection() as conn:
             conn.execute(
-                "UPDATE Orders SET OrderStatus = ? WHERE OrderID = ?", 
+                "UPDATE Orders SET OrderStatus = ? WHERE OrderID = ?",
                 (new_status, order_id)
             )
             conn.commit()
@@ -131,7 +184,7 @@ class TransactionModel:
             customer_id = self._find_or_create_customer(conn, customer_name,
                                                         customer_phone, address)
             platform_id = self._platform_id_for(conn, order_type)
-            initial_status = "Completed" if order_type == "Walk-in" else "Pending"
+            initial_status = "Paid" if order_type == "Walk-in" else "Pending"
 
             # Store OrderDate using LOCAL time explicitly. Relying on SQLite's
             # column default (datetime('now')) is wrong here -- that function
@@ -267,4 +320,4 @@ class TransactionModel:
             ],
             "total_quantity": sum(it["Quantity"] for it in items),
             "total_amount": header["TotalAmount"],
-        }    
+        }

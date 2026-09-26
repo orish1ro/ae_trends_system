@@ -69,7 +69,6 @@ class MainWindow(QMainWindow):
             ]),
             ("SALES", [
                 ("New Transaction", 1),
-                ("Transactions", 5),
                 ("Orders", 4),
             ]),
             ("INVENTORY", [
@@ -77,6 +76,7 @@ class MainWindow(QMainWindow):
                 ("Purchase Orders", 3),
             ]),
             ("REPORTS", [
+                ("Transactions", 5),
                 ("Reports", 6),
             ]),
         ]

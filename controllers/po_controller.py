@@ -23,12 +23,17 @@ class POController:
             self.view.show_order_details(details)
 
     def handle_mark_received(self, po_number):
-        # This will require a new 'mark_po_received' function in your po_model.py
-        # that runs: UPDATE purchase_orders SET status = 'Received' WHERE po_number = ?
         try:
             self.model.mark_po_received(po_number)
             QMessageBox.information(self.view, "Status Updated", f"Purchase Order {po_number} marked as Received.")
+            
+            # This updates the PO table
             self.load_po_history()
+            
+            # THIS IS THE FIX: This triggers the global refresh so Inventory updates instantly
+            if self.on_po_saved:
+                self.on_po_saved()
+                
         except AttributeError:
             QMessageBox.warning(self.view, "Model Update Needed", 
                                 "You need to add a 'mark_po_received(self, po_number)' method in your po_model.py first!")

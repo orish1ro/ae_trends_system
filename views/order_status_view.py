@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
                              QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, 
                              QButtonGroup, QDialog, QComboBox, QScrollArea)
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QColor
 
 LABEL_RESET = "background: transparent; border: none;"
 
@@ -26,6 +27,7 @@ class OrderStatusView(QWidget):
     filter_changed = pyqtSignal()
     status_changed = pyqtSignal(str, str) # order_code, new_status
     view_requested = pyqtSignal(str)      # order_code
+    confirm_requested = pyqtSignal(str)   # move order to history
 
     def __init__(self):
         super().__init__()
@@ -67,11 +69,17 @@ class OrderStatusView(QWidget):
         self.search_input.setStyleSheet("padding: 8px 12px; border: 1px solid #CCC; border-radius: 6px; background: white;")
         layout.addWidget(self.search_input)
 
-        # Table (Fixed Black Background Selection Bug)
+        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels(["ORDER ID", "CUSTOMER NAME", "ITEMS", "PLATFORM", "DATE", "TOTAL AMOUNT", "CURRENT STATUS", "ACTION"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents) 
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)            
+        self.table.setColumnWidth(7, 160)                                       
+
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setStyleSheet("""
@@ -90,35 +98,59 @@ class OrderStatusView(QWidget):
     def display_orders(self, orders):
         self.table.setRowCount(len(orders))
         for row, ord_item in enumerate(orders):
-            self.table.setItem(row, 0, QTableWidgetItem(ord_item['order_code']))
+            order_code = ord_item['order_code']
+            
+            self.table.setItem(row, 0, QTableWidgetItem(order_code))
             self.table.setItem(row, 1, QTableWidgetItem(ord_item['customer_name']))
-            self.table.setItem(row, 2, QTableWidgetItem(ord_item['items']))
+            
+            # FIX: Make the underlying cell completely empty so it cannot overlap on selection
+            items_text = ord_item['items']
+            self.table.setItem(row, 2, QTableWidgetItem("")) 
+            
+            # Professional link styling
+            items_btn = QPushButton(items_text)
+            items_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            items_btn.setStyleSheet("""
+                QPushButton { 
+                    color: #A9872E; 
+                    background: transparent; 
+                    border: none; 
+                    text-align: left; 
+                    padding: 0px 8px;
+                    font-weight: 600;
+                }
+                QPushButton:hover { 
+                    color: #8A5A00; 
+                    text-decoration: underline; 
+                }
+            """)
+            items_btn.clicked.connect(lambda checked, oc=order_code: self.view_requested.emit(oc))
+            self.table.setCellWidget(row, 2, items_btn)
+            
             self.table.setItem(row, 3, QTableWidgetItem(ord_item['order_type']))
             self.table.setItem(row, 4, QTableWidgetItem(ord_item['order_date']))
             self.table.setItem(row, 5, QTableWidgetItem(f"₱{ord_item['total_amount']:,.2f}"))
             
-            # Interactive Dropdown (Fixed styling)
+            # Interactive Dropdown 
             combo = QComboBox()
-            combo.addItems(["Pending", "Paid", "Prepared", "Shipped", "Completed", "Refunded", "Cancelled"])
+            combo.addItems(["Pending", "Paid", "Prepared", "Shipped"])
             combo.setCurrentText(ord_item['status'])
             combo.setStyleSheet("""
                 QComboBox { combobox-popup: 0; padding: 4px; border: 1px solid #D9D2C2; border-radius: 4px; background: white; color: #2A2421;}
                 QComboBox::drop-down { border: none; width: 20px; }
                 QComboBox QAbstractItemView { background-color: white; border: 1px solid #D9D2C2; selection-background-color: #F3E7C2; selection-color: #2A2421; outline: none; }
             """)
-            order_code = ord_item['order_code']
             combo.currentTextChanged.connect(lambda text, oc=order_code: self.status_changed.emit(oc, text))
             self.table.setCellWidget(row, 6, combo)
 
             # Action Button
-            btn = QPushButton("View")
+            btn = QPushButton("Confirm Transaction" if ord_item['status'] != "Completed" else "View")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet("""
                 QPushButton { color: #FFFFFF; background-color: #C09E3B; border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; }
                 QPushButton:hover { background-color: #B18F2E; }
             """)
-            # Connect the button to emit the order_code instead of the customer name
-            btn.clicked.connect(lambda checked, oc=order_code: self.view_requested.emit(oc))
+            btn.clicked.connect(lambda checked, oc=order_code: self.confirm_requested.emit(oc) if ord_item['status'] != 'Completed' else self.view_requested.emit(oc))
             
             btn_container = QWidget()
             btn_layout = QHBoxLayout(btn_container)
@@ -164,7 +196,6 @@ class OrderDetailDialog(QDialog):
         title_lbl.setStyleSheet(f"font-size: 18px; font-weight: bold; color: #2A2421; {LABEL_RESET}")
         layout.addWidget(title_lbl)
         
-        # Add the colored badge
         badge_layout = QHBoxLayout()
         badge_layout.addWidget(status_badge(detail["status"]))
         badge_layout.addStretch()

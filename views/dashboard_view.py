@@ -12,12 +12,9 @@ from PyQt6.QtCore import QByteArray
 from views.styled_dropdown import StyledComboBox
 from views.transaction_history_view import status_badge, STATUS_COLORS
 
-# Every label placed inside a white card MUST get both "background: transparent"
-# and "border: none" explicitly, or it can pick up the card's own border/background
-# instead of blending into it. That was the cause of the boxed-up look.
 LABEL_RESET = "background: transparent; border: none;"
 
-# --- Palette (unchanged brand colors, just used more deliberately) --------
+# --- Palette --------
 INK = "#2A2421"
 MUTED = "#8B8176"
 FAINT = "#A39B90"
@@ -86,8 +83,6 @@ def _primary_button(text):
 
 
 class Sparkline(QFrame):
-    """Tiny inline trend line used inside a KPI card."""
-
     def __init__(self, color=GOLD):
         super().__init__()
         self.color = QColor(color)
@@ -147,8 +142,6 @@ class Sparkline(QFrame):
 
 
 class KPICard(ClickableCard):
-    """A single premium KPI card: eyebrow title, big value, delta/status row, optional sparkline."""
-
     def __init__(self, title, accent=GOLD, with_sparkline=False):
         super().__init__()
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -199,14 +192,12 @@ class KPICard(ClickableCard):
 
 
 class SalesLineChart(QFrame):
-    """Smooth curved revenue trend chart with a gold line, minimal grid, and hover tooltip."""
-
     filter_changed = pyqtSignal(str)
     empty_action_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
-        self.points = []  # list of (label, value)
+        self.points = []
         self.setMinimumHeight(260)
         self.setMouseTracking(True)
         self.setObjectName("salesChart")
@@ -223,7 +214,6 @@ class SalesLineChart(QFrame):
         title.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {INK}; {LABEL_RESET}")
         title.move(18, 14)
         title.adjustSize()
-        self._title_lbl = title
 
         subtitle = QLabel("Revenue trend for the selected period")
         subtitle.setParent(self)
@@ -261,10 +251,7 @@ class SalesLineChart(QFrame):
         </svg>'''
 
     def resizeEvent(self, event):
-        # Keep chart filter aligned with the card header
         self.filter_combo.move(max(16, self.width() - self.filter_combo.width() - 16), 12)
-        # Center the empty state within the space below the header, clamped so
-        # nothing is ever positioned outside the frame even if squeezed.
         top = 56
         available = max(140, self.height() - top - 10)
         block_height = 120 + 8 + 20 + 4 + 18 + 10 + self.empty_action.height()
@@ -346,7 +333,6 @@ class SalesLineChart(QFrame):
 
         left, top, width, height = self._plot_rect()
 
-        # minimal horizontal grid lines
         painter.setPen(QPen(QColor(BORDER_SOFT), 1))
         for i in range(4):
             y = top + height - (height / 3) * i
@@ -354,7 +340,6 @@ class SalesLineChart(QFrame):
 
         positions = self._point_positions()
 
-        # smooth curved line
         path = QPainterPath()
         path.moveTo(*positions[0])
         for i in range(1, len(positions)):
@@ -380,7 +365,6 @@ class SalesLineChart(QFrame):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
 
-        # points + x labels
         painter.setFont(QFont("Arial", 8))
         for i, (x, y) in enumerate(positions):
             is_hover = (i == self._hover_index)
@@ -404,8 +388,6 @@ class SalesLineChart(QFrame):
 
 
 class OrderStatusDonut(QFrame):
-    """Donut chart for order status breakdown with a legend."""
-
     def __init__(self):
         super().__init__()
         self.values = []
@@ -455,7 +437,7 @@ class OrderStatusDonut(QFrame):
         total = sum(v for _, v in self.values) or 1
         center_x, center_y = 108, 150
         outer = 58
-        thickness = 20
+        thickness = 16
         inner = outer - thickness
         start_angle = 90 * 16
         painter.setPen(Qt.PenStyle.NoPen)
@@ -468,11 +450,11 @@ class OrderStatusDonut(QFrame):
         painter.drawEllipse(center_x - inner, center_y - inner, inner * 2, inner * 2)
 
         painter.setPen(QColor(INK))
-        painter.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        painter.drawText(center_x - 40, center_y - 10, 80, 22, Qt.AlignmentFlag.AlignCenter, str(int(total)))
-        painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+        painter.setFont(QFont("Arial", 15, QFont.Weight.Bold))
+        painter.drawText(center_x - 40, center_y - 18, 80, 20, Qt.AlignmentFlag.AlignCenter, str(int(total)))
+        painter.setFont(QFont("Arial", 7, QFont.Weight.Bold))
         painter.setPen(QColor(FAINT))
-        painter.drawText(center_x - 40, center_y + 10, 80, 14, Qt.AlignmentFlag.AlignCenter, "TOTAL ORDERS")
+        painter.drawText(center_x - 32, center_y + 8, 64, 14, Qt.AlignmentFlag.AlignCenter, "TOTAL ORDERS")
 
         legend_x = 200
         legend_y = 92
@@ -502,6 +484,10 @@ class RankedListPanel(QFrame):
     def __init__(self, title, subtitle, empty_text, action_text=None):
         super().__init__()
         self.setObjectName("rankedPanel")
+        
+        # FIX: Force these cards to always be 280px tall so they never stretch or shrink
+        self.setFixedHeight(250)
+        
         self.setStyleSheet(f"""
             QFrame#rankedPanel {{
                 background-color: {CARD_BG};
@@ -542,6 +528,8 @@ class RankedListPanel(QFrame):
         self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_lbl.setContentsMargins(0, 18, 0, 18)
         self.outer.addWidget(self.empty_lbl)
+        
+        # This stretch naturally pushes pagination buttons to the very bottom 
         self.outer.addStretch()
 
     def clear_rows(self):
@@ -568,8 +556,22 @@ class DashboardView(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setStyleSheet(f"background-color: {PAGE_BG};")
+        
+        # --- Pagination Trackers ---
+        self.all_alerts = []
+        self.current_alert_page = 0
+        self.alerts_per_page = 4
+
+        self.all_top_products = []
+        self.current_top_page = 0
+        self.top_per_page = 4
+
         self._all_transactions = []
+        self._filtered_transactions = []
+        self.current_txn_page = 0
+        self.txns_per_page = 5
+
+        self.setStyleSheet(f"background-color: {PAGE_BG};")
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -586,7 +588,6 @@ class DashboardView(QWidget):
         scroll.setWidget(content)
 
         root = QVBoxLayout(content)
-        # Consistent dashboard spacing
         root.setContentsMargins(32, 28, 32, 32)
         root.setSpacing(22)
 
@@ -597,7 +598,7 @@ class DashboardView(QWidget):
         root.addLayout(self._build_transactions_section())
 
     # ------------------------------------------------------------------ #
-    # Header
+    # Header & KPIs (Unchanged)
     # ------------------------------------------------------------------ #
     def _build_header(self):
         wrap = QVBoxLayout()
@@ -621,7 +622,6 @@ class DashboardView(QWidget):
         self.receive_stock_btn = _ghost_button("Receive Stock")
         self.new_transaction_btn = _primary_button("+ New Transaction")
 
-        # Keep header actions consistent on every window size
         self.export_btn.setFixedSize(130, 40)
         self.receive_stock_btn.setFixedSize(140, 40)
         self.new_transaction_btn.setFixedSize(160, 40)
@@ -691,9 +691,6 @@ class DashboardView(QWidget):
         when = when or datetime.now()
         self.sync_lbl.setText(f"🔄  Synced at {when.strftime('%I:%M %p').lstrip('0')}")
 
-    # ------------------------------------------------------------------ #
-    # KPI cards
-    # ------------------------------------------------------------------ #
     def _build_kpi_row(self):
         row = QHBoxLayout()
         row.setSpacing(14)
@@ -714,9 +711,6 @@ class DashboardView(QWidget):
             row.addWidget(card)
         return row
 
-    # ------------------------------------------------------------------ #
-    # Charts
-    # ------------------------------------------------------------------ #
     def _build_analytics_row(self):
         row = QHBoxLayout()
         row.setSpacing(16)
@@ -729,7 +723,7 @@ class DashboardView(QWidget):
         return row
 
     # ------------------------------------------------------------------ #
-    # Top products / alerts
+    # Top products / alerts (Fixed heights)
     # ------------------------------------------------------------------ #
     def _build_secondary_row(self):
         row = QHBoxLayout()
@@ -753,21 +747,32 @@ class DashboardView(QWidget):
         return row
 
     def update_top_products(self, products):
-        """products: list of dicts with name, qty, revenue (best first)."""
+        self.all_top_products = products or []
+        self.current_top_page = 0
+        self.render_top_products_page()
+
+    def render_top_products_page(self):
         self.top_products_panel.clear_rows()
-        self.top_products_panel.set_empty(not products)
+        self.top_products_panel.set_empty(not self.all_top_products)
+        
+        start_idx = self.current_top_page * self.top_per_page
+        end_idx = start_idx + self.top_per_page
+        page_items = self.all_top_products[start_idx:end_idx]
+
         medal_colors = [GOLD, "#9AA0A6", "#B08D57"]
-        for i, item in enumerate((products or [])[:5]):
+        
+        for i, item in enumerate(page_items):
+            global_rank = start_idx + i 
             row_frame = QFrame()
             row_layout = QHBoxLayout(row_frame)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(10)
 
-            rank = QLabel(str(i + 1))
+            rank = QLabel(str(global_rank + 1))
             rank.setFixedSize(24, 24)
             rank.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            rank_color = medal_colors[i] if i < 3 else BORDER
-            rank_text_color = "white" if i < 3 else MUTED
+            rank_color = medal_colors[global_rank] if global_rank < 3 else BORDER
+            rank_text_color = "white" if global_rank < 3 else MUTED
             rank.setStyleSheet(f"background: {rank_color}; color: {rank_text_color}; border-radius: 12px; font-size: 11px; font-weight: 800; border: none;")
 
             name_box = QVBoxLayout()
@@ -787,11 +792,48 @@ class DashboardView(QWidget):
             row_layout.addWidget(revenue_lbl)
             self.top_products_panel.rows_box.addWidget(row_frame)
 
+        if len(self.all_top_products) > self.top_per_page:
+            btn_layout = QHBoxLayout()
+            
+            prev_btn = QPushButton("← Previous")
+            prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            prev_btn.setEnabled(self.current_top_page > 0)
+            prev_btn.setStyleSheet(f"color: {GOLD_DARK}; border: none; font-weight: bold; {LABEL_RESET}")
+            prev_btn.clicked.connect(lambda: self.change_top_page(-1))
+
+            next_btn = QPushButton("Next →")
+            next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            next_btn.setEnabled(end_idx < len(self.all_top_products)) 
+            next_btn.setStyleSheet(f"color: {GOLD_DARK}; border: none; font-weight: bold; {LABEL_RESET}")
+            next_btn.clicked.connect(lambda: self.change_top_page(1))
+
+            btn_layout.addWidget(prev_btn)
+            btn_layout.addStretch()
+            btn_layout.addWidget(next_btn)
+            
+            btn_frame = QFrame()
+            btn_frame.setStyleSheet("background: transparent; border: none;")
+            btn_frame.setLayout(btn_layout)
+            self.top_products_panel.rows_box.addWidget(btn_frame)
+
+    def change_top_page(self, direction):
+        self.current_top_page += direction
+        self.render_top_products_page()
+
     def update_alerts(self, alerts):
-        """alerts: list of dicts with name, category, stock_qty, status, days_left(optional)."""
+        self.all_alerts = alerts or []
+        self.current_alert_page = 0
+        self.render_alerts_page()
+
+    def render_alerts_page(self):
         self.alerts_panel.clear_rows()
-        self.alerts_panel.set_empty(not alerts)
-        for item in (alerts or [])[:6]:
+        self.alerts_panel.set_empty(not self.all_alerts)
+        
+        start_idx = self.current_alert_page * self.alerts_per_page
+        end_idx = start_idx + self.alerts_per_page
+        page_items = self.all_alerts[start_idx:end_idx]
+
+        for item in page_items:
             row_frame = QFrame()
             row_layout = QHBoxLayout(row_frame)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -827,8 +869,35 @@ class DashboardView(QWidget):
             row_layout.addWidget(badge)
             self.alerts_panel.rows_box.addWidget(row_frame)
 
+        if len(self.all_alerts) > self.alerts_per_page:
+            btn_layout = QHBoxLayout()
+            
+            prev_btn = QPushButton("← Previous")
+            prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            prev_btn.setEnabled(self.current_alert_page > 0)
+            prev_btn.setStyleSheet(f"color: {GOLD_DARK}; border: none; font-weight: bold; {LABEL_RESET}")
+            prev_btn.clicked.connect(lambda: self.change_alert_page(-1))
+
+            next_btn = QPushButton("Next →")
+            next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            next_btn.setEnabled(end_idx < len(self.all_alerts)) 
+            next_btn.setStyleSheet(f"color: {GOLD_DARK}; border: none; font-weight: bold; {LABEL_RESET}")
+            next_btn.clicked.connect(lambda: self.change_alert_page(1))
+
+            btn_layout.addWidget(prev_btn)
+            btn_layout.addStretch()
+            btn_layout.addWidget(next_btn)
+            
+            btn_frame = QFrame()
+            btn_frame.setLayout(btn_layout)
+            self.alerts_panel.rows_box.addWidget(btn_frame)
+
+    def change_alert_page(self, direction):
+        self.current_alert_page += direction
+        self.render_alerts_page()
+
     # ------------------------------------------------------------------ #
-    # Recent transactions table
+    # Recent transactions table (Now paginated & Fixed Height)
     # ------------------------------------------------------------------ #
     def _build_transactions_section(self):
         wrap = QVBoxLayout()
@@ -870,9 +939,9 @@ class DashboardView(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(False)
-        self.table.setSortingEnabled(True)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setDefaultSectionSize(42)
+        
         header_view = self.table.horizontalHeader()
         header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header_view.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
@@ -880,6 +949,11 @@ class DashboardView(QWidget):
             header_view.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header_view.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(6, 118)
+        
+        # FIX: Turn off the ugly scrollbar entirely and set a fixed height (Header + exactly 5 rows)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.table.setFixedHeight(254) 
+        
         self.table.setStyleSheet(f"""
             QTableWidget {{
                 background: {CARD_BG};
@@ -909,23 +983,113 @@ class DashboardView(QWidget):
                 padding: 10px;
             }}
         """)
-        self.table.setMinimumHeight(260)
         wrap.addWidget(self.table)
+        
+        # NEW: Pagination row for Transactions
+        txn_nav = QHBoxLayout()
+        
+        self.txn_prev_btn = QPushButton("← Previous")
+        self.txn_prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.txn_prev_btn.setStyleSheet(f"color: {GOLD_DARK}; border: none; font-weight: bold; {LABEL_RESET}")
+        self.txn_prev_btn.clicked.connect(lambda: self.change_txn_page(-1))
+
+        self.txn_page_lbl = QLabel("Page 1")
+        self.txn_page_lbl.setStyleSheet(f"color: {MUTED}; font-size: 11px; font-weight: 600; {LABEL_RESET}")
+
+        self.txn_next_btn = QPushButton("Next →")
+        self.txn_next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.txn_next_btn.setStyleSheet(f"color: {GOLD_DARK}; border: none; font-weight: bold; {LABEL_RESET}")
+        self.txn_next_btn.clicked.connect(lambda: self.change_txn_page(1))
+
+        txn_nav.addWidget(self.txn_prev_btn)
+        txn_nav.addStretch()
+        txn_nav.addWidget(self.txn_page_lbl)
+        txn_nav.addStretch()
+        txn_nav.addWidget(self.txn_next_btn)
+
+        wrap.addLayout(txn_nav)
+        
         return wrap
 
     def _filter_transactions(self, text):
         text = (text or "").strip().lower()
         if not text:
-            self._render_transactions(self._all_transactions)
+            self._filtered_transactions = self._all_transactions
+        else:
+            self._filtered_transactions = [
+                t for t in self._all_transactions
+                if text in t.get("order_code", "").lower() or text in t.get("customer_name", "").lower()
+            ]
+        self.current_txn_page = 0
+        self._render_transactions()
+
+    def display_recent_transactions(self, transactions):
+        self._all_transactions = transactions or []
+        self.search_box.blockSignals(True)
+        self.search_box.clear()
+        self.search_box.blockSignals(False)
+        self._filtered_transactions = self._all_transactions
+        self.current_txn_page = 0
+        self._render_transactions()
+
+    def change_txn_page(self, direction):
+        self.current_txn_page += direction
+        self._render_transactions()
+
+    def _render_transactions(self, allow_empty_message="No transactions yet — recorded sales will appear here."):
+        self.table.setSortingEnabled(False)
+        
+        start_idx = self.current_txn_page * self.txns_per_page
+        end_idx = start_idx + self.txns_per_page
+        page_items = self._filtered_transactions[start_idx:end_idx]
+
+        total_pages = max(1, (len(self._filtered_transactions) + self.txns_per_page - 1) // self.txns_per_page)
+        self.txn_prev_btn.setEnabled(self.current_txn_page > 0)
+        self.txn_next_btn.setEnabled(self.current_txn_page < total_pages - 1)
+        
+        # Hide the pagination buttons completely if there's only 1 page of data
+        has_multiple_pages = total_pages > 1
+        self.txn_prev_btn.setVisible(has_multiple_pages)
+        self.txn_next_btn.setVisible(has_multiple_pages)
+        self.txn_page_lbl.setVisible(has_multiple_pages)
+        self.txn_page_lbl.setText(f"Page {self.current_txn_page + 1} of {total_pages}")
+
+        if not page_items:
+            self.table.clearSpans()
+            self.table.setRowCount(1)
+            msg = "No transactions match your search." if self.search_box.text() else allow_empty_message
+            empty = QTableWidgetItem(msg)
+            empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setSpan(0, 0, 1, self.table.columnCount())
+            self.table.setItem(0, 0, empty)
+            self.table.setSortingEnabled(True)
             return
-        filtered = [
-            t for t in self._all_transactions
-            if text in t.get("order_code", "").lower() or text in t.get("customer_name", "").lower()
-        ]
-        self._render_transactions(filtered, allow_empty_message="No transactions match your search.")
+
+        self.table.clearSpans()
+        self.table.setRowCount(len(page_items))
+        for row, txn in enumerate(page_items):
+            self.table.setItem(row, 0, QTableWidgetItem(txn.get('order_code', '—')))
+            self.table.setItem(row, 1, QTableWidgetItem(txn.get('order_date', '—')))
+            self.table.setItem(row, 2, QTableWidgetItem(txn.get('customer_name', '—')))
+
+            items_text = txn.get('items', '—')
+            items_item = QTableWidgetItem(str(items_text))
+            items_item.setToolTip(str(items_text))
+            self.table.setItem(row, 3, items_item)
+
+            self.table.setItem(row, 4, QTableWidgetItem(txn.get('payment_method') or '—'))
+
+            total_item = QTableWidgetItem(f"₱{txn.get('total_amount', 0):,.2f}")
+            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 5, total_item)
+
+            self.table.setCellWidget(row, 6, status_badge(txn.get('status', '—')))
+            
+        self.table.setSortingEnabled(True)
 
     # ------------------------------------------------------------------ #
-    # Signal plumbing shared with the old chart API
+    # Signal plumbing 
     # ------------------------------------------------------------------ #
     def _on_global_range_changed(self, preset):
         if self.sales_chart.filter_combo.currentText() != preset:
@@ -942,7 +1106,7 @@ class DashboardView(QWidget):
         self.date_range_changed.emit(preset)
 
     # ------------------------------------------------------------------ #
-    # Public data-binding API (kept compatible with report_controller.py)
+    # Data-binding API 
     # ------------------------------------------------------------------ #
     def update_metrics(self, sales, low_stock, pending, expiring, sales_change=None,
                         total_orders=None, inventory_value=None, expiring_days=None):
@@ -988,9 +1152,12 @@ class DashboardView(QWidget):
         self.notification_btn.setText(f"🔔  Alerts: {low_stock + expiring}")
         self.set_last_sync()
 
-    def update_charts(self, transactions):
-        sales_values = [(row.get("chart_label", row["date"]), row["total"]) for row in transactions[:7]]
-        sales_values = list(reversed(sales_values))
+    def update_charts(self, transactions, daily_series=None):
+        if daily_series:
+            sales_values = [(row["label"], row["revenue"]) for row in daily_series[-7:]]
+        else:
+            sales_values = [(row.get("chart_label", row["date"]), row["total"]) for row in transactions[:7]]
+            sales_values = list(reversed(sales_values))
         status_counts = {}
         for row in transactions:
             status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
@@ -998,44 +1165,3 @@ class DashboardView(QWidget):
         self.sales_chart.set_values(sales_values)
         self.status_chart.set_values(sorted(status_counts.items(), key=lambda item: item[0]))
         self.card_sales.spark.set_values([v for _, v in sales_values])
-
-    def display_recent_transactions(self, transactions):
-        self._all_transactions = transactions or []
-        self.search_box.blockSignals(True)
-        self.search_box.clear()
-        self.search_box.blockSignals(False)
-        self._render_transactions(self._all_transactions)
-
-    def _render_transactions(self, transactions, allow_empty_message="No transactions yet — recorded sales will appear here."):
-        self.table.setSortingEnabled(False)
-        if not transactions:
-            self.table.clearSpans()
-            self.table.setRowCount(1)
-            empty = QTableWidgetItem(allow_empty_message)
-            empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table.setSpan(0, 0, 1, self.table.columnCount())
-            self.table.setItem(0, 0, empty)
-            self.table.setSortingEnabled(True)
-            return
-
-        self.table.clearSpans()
-        self.table.setRowCount(len(transactions))
-        for row, txn in enumerate(transactions):
-            self.table.setItem(row, 0, QTableWidgetItem(txn.get('order_code', '—')))
-            self.table.setItem(row, 1, QTableWidgetItem(txn.get('order_date', '—')))
-            self.table.setItem(row, 2, QTableWidgetItem(txn.get('customer_name', '—')))
-
-            items_text = txn.get('items', '—')
-            items_item = QTableWidgetItem(items_text)
-            items_item.setToolTip(items_text)
-            self.table.setItem(row, 3, items_item)
-
-            self.table.setItem(row, 4, QTableWidgetItem(txn.get('payment_method') or '—'))
-
-            total_item = QTableWidgetItem(f"₱{txn.get('total_amount', 0):,.2f}")
-            total_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self.table.setItem(row, 5, total_item)
-
-            self.table.setCellWidget(row, 6, status_badge(txn.get('status', '—')))
-        self.table.setSortingEnabled(True)

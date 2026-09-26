@@ -70,7 +70,7 @@ class HistoryModel:
             JOIN Platform pl ON pl.PlatformID = o.PlatformID
             JOIN Staff st ON st.StaffID = o.StaffID
             LEFT JOIN Payment p ON p.OrderID = o.OrderID
-            WHERE 1=1
+            WHERE o.OrderStatus = 'Completed'
         """
         params = []
         if search:
